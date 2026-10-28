@@ -1,0 +1,828 @@
+.page {
+  background: #fff;
+}
+.blueTop {
+  background: #03f;
+  color: white;
+  position: relative;
+  padding-bottom: 160px;
+  overflow: hidden;
+}
+.hero {
+  max-width: 960px;
+  margin: 40px auto 0;
+  text-align: center;
+  padding: 15px 30px 60px;
+  position: relative;
+  z-index: 1;
+}
+.cityLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #c5d2ff;
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid #ffffff25;
+  border-radius: 8px;
+  margin-bottom: 25px;
+}
+.hero h1 {
+  font-size: 86px;
+  line-height: 0.95;
+  color: white;
+  letter-spacing: -0.045em;
+}
+.hero h1 em {
+  font-style: normal;
+  color: #a3b7ff;
+}
+.hero > p {
+  color: #cfdaff;
+  font-size: 17px;
+  line-height: 1.65;
+  max-width: 590px;
+  margin: 26px auto 0;
+}
+.heroButtons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 25px;
+  margin-top: 30px;
+}
+.heroButtons > button {
+  padding: 13px 20px;
+  min-height: 47px;
+  font-size: 14px;
+  border-radius: 12px;
+}
+.heroButtons > a {
+  color: #d3ddff;
+  font-size: 12px;
+}
+.heroButtons > a:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+.floatingEuro,
+.floatingEuro2 {
+  font-family: var(--font-pixel), Georgia, serif;
+  position: absolute;
+  font-size: 64px;
+  color: #fff;
+  opacity: 0.16;
+  pointer-events: none;
+}
+.floatingEuro {
+  left: -25px;
+  bottom: 36px;
+  transform: rotate(-18deg);
+}
+.floatingEuro2 {
+  right: 5px;
+  top: 50px;
+  transform: rotate(15deg);
+  font-size: 45px;
+}
+.skyline {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  max-width: none !important;
+  height: 200px;
+  object-fit: cover;
+  object-position: center bottom;
+}
+.main {
+  max-width: 1180px;
+  margin: auto;
+  padding: 0 32px;
+}
+.plans {
+  padding-top: 75px;
+}
+.sectionHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 30px;
+  margin-bottom: 30px;
+}
+.sectionHeading h2 {
+  font-size: 49px;
+  line-height: 1.02;
+  margin-top: 13px;
+}
+.sectionHeading > p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #999;
+  max-width: 330px;
+}
+.planGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.plan {
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
+  border-radius: 20px;
+  padding: 27px;
+  display: flex;
+  flex-direction: column;
+}
+.planNumber {
+  font-family: var(--font-pixel), Georgia, serif;
+  font-size: 38px;
+  color: #a3b6ff;
+  line-height: 1;
+}
+.plan h3 {
+  font-size: 34px;
+  line-height: 1.05;
+  margin: 22px 0 10px;
+}
+.plan p {
+  color: #888;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.plan ul {
+  list-style: none;
+  padding: 0;
+  margin: 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.plan li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 12px;
+  color: #666;
+  line-height: 1.6;
+}
+.plan li > svg {
+  color: #03f;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.plan > button {
+  border: 0;
+  background: transparent;
+  padding: 15px 0 0;
+  border-top: 1px solid #e4e4e4;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #03f;
+  font-size: 12px;
+  margin-top: auto;
+}
+.plan > button:hover {
+  text-decoration: underline;
+}
+.planner {
+  display: grid;
+  grid-template-columns: 1fr 1.05fr;
+  gap: 80px;
+  align-items: center;
+  padding: 100px 0;
+  scroll-margin-top: 32px;
+}
+.plannerIntro h2 {
+  font-size: 66px;
+  line-height: 0.98;
+  margin: 18px 0 24px;
+}
+.plannerIntro > p {
+  font-size: 15px;
+  line-height: 1.75;
+  color: #777;
+  max-width: 390px;
+}
+.localNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-top: 35px;
+  max-width: 350px;
+}
+.localNote > svg {
+  flex-shrink: 0;
+  color: #a1b4ff;
+  margin-top: 2px;
+}
+.localNote p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #999;
+}
+.budgetCard {
+  padding: 30px;
+  border: 1px solid #e5e5e5;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 20px 50px -25px #172c7520;
+}
+.sliderField {
+  margin-bottom: 24px;
+}
+.sliderField label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #777;
+}
+.sliderField label strong {
+  color: #03f;
+  background: #f0f3ff;
+  font-size: 16px;
+  border-radius: 7px;
+  min-width: 36px;
+  text-align: center;
+  padding: 2px 5px;
+  font-weight: 500;
+}
+.sliderField input {
+  width: 100%;
+  accent-color: #03f;
+  min-height: 35px;
+  cursor: pointer;
+  display: block;
+  margin: 8px 0 1px;
+}
+.sliderField > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #aaa;
+}
+.numberFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  margin-top: 29px;
+}
+.numberFields label,
+.contactForm label {
+  font-size: 11px;
+  color: #777;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.numberFields input,
+.contactForm input,
+.contactForm textarea {
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 9px;
+  padding: 10px 12px;
+  min-height: 42px;
+  font-size: 15px !important;
+  color: #1a1a1a;
+  width: 100%;
+  outline-color: #03f;
+}
+.numberFields input:focus,
+.contactForm input:focus,
+.contactForm textarea:focus {
+  border-color: #03f;
+  outline: 3px solid #ebefff;
+}
+.total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 0 18px;
+  border-top: 1px solid #e8e8e8;
+  margin-top: 28px;
+}
+.total span {
+  font-size: 12px;
+  color: #888;
+}
+.total strong {
+  display: block;
+  font-family: var(--font-pixel), Georgia, serif;
+  font-size: 64px;
+  color: #03f;
+  font-weight: 400;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  margin-top: 7px;
+}
+.total > svg {
+  color: #c0ceff;
+  flex-shrink: 0;
+}
+.formula {
+  font-size: 10px !important;
+  line-height: 1.8 !important;
+  color: #999 !important;
+}
+.budgetActions {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  margin-top: 24px;
+}
+.budgetActions > button:first-child {
+  flex: 1;
+  font-size: 13px;
+}
+.budgetActions > button:last-child {
+  font-size: 12px;
+}
+.process {
+  padding: 0 0 90px;
+}
+.process > h2 {
+  font-size: 47px;
+  text-align: center;
+  margin-bottom: 40px !important;
+}
+.process > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 35px;
+}
+.process article {
+  border-top: 1px solid #e8e8e8;
+  padding-top: 24px;
+}
+.process article > span {
+  font-family: var(--font-pixel), Georgia, serif;
+  font-size: 36px;
+  line-height: 1;
+  color: #b9c7ff;
+}
+.process h3 {
+  font-size: 28px;
+  line-height: 1.1;
+  margin: 17px 0 12px;
+}
+.process p {
+  font-size: 13px;
+  color: #888;
+  line-height: 1.7;
+}
+.contact {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: 70px;
+  padding: 65px 0 95px;
+  border-top: 1px solid #e8e8e8;
+  scroll-margin-top: 30px;
+  align-items: start;
+}
+.contact h2 {
+  font-size: 58px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  margin: 16px 0 25px;
+}
+.contact > div > p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #777;
+  max-width: 370px;
+}
+.contact .contactSmall {
+  color: #999;
+  font-size: 12px;
+  margin-top: 24px;
+  margin-bottom: 26px;
+}
+.contactForm {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+}
+.contactFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.contactForm textarea {
+  resize: vertical;
+  line-height: 1.65;
+}
+.contactForm .primaryButton {
+  width: 100%;
+}
+.enquiryBudget {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f5f7ff;
+  border: 1px solid #e6ecff;
+  border-radius: 10px;
+  padding: 13px;
+  font-size: 11px;
+  color: #7a84aa;
+}
+.enquiryBudget strong {
+  color: #03f;
+  font-size: 15px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.enquiryBudget a {
+  color: #03f;
+  text-decoration: underline;
+  font-size: 11px;
+}
+.privacyNote {
+  font-size: 10px !important;
+  line-height: 1.7;
+  color: #999;
+}
+.privacyNote a {
+  text-decoration: underline !important;
+  color: #707da7 !important;
+}
+.success {
+  border: 1px solid #cce4d4;
+  border-radius: 20px;
+  padding: 35px;
+  background: #f3fbf6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 17px;
+}
+.success > svg {
+  color: #198e4c;
+}
+.success h3 {
+  font-size: 38px;
+  color: #24613b;
+}
+.success > p {
+  font-size: 13px !important;
+  color: #678473 !important;
+  line-height: 1.7;
+}
+.success > span {
+  color: #6c907b;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.success > button {
+  margin-top: 5px;
+  font-size: 12px;
+}
+@media (max-width: 1050px) {
+  .hero h1 {
+    font-size: 74px;
+  }
+  .hero {
+    padding-top: 10px;
+  }
+  .hero > p {
+    font-size: 16px;
+  }
+  .planner {
+    gap: 45px;
+  }
+  .plannerIntro h2 {
+    font-size: 58px;
+  }
+  .plan {
+    padding: 23px;
+  }
+  .plan h3 {
+    font-size: 29px;
+  }
+  .contact {
+    gap: 40px;
+  }
+  .contact h2 {
+    font-size: 52px;
+  }
+  .floatingEuro {
+    left: 20px;
+  }
+  .floatingEuro2 {
+    right: 20px;
+  }
+  .sectionHeading h2 {
+    font-size: 43px;
+  }
+}
+@media (max-width: 779px) {
+  .blueTop {
+    padding-bottom: 125px;
+  }
+  .hero {
+    margin-top: 30px;
+    padding-bottom: 55px;
+  }
+  .hero h1 {
+    font-size: 65px;
+  }
+  .hero > p {
+    font-size: 15px;
+    max-width: 490px;
+  }
+  .skyline {
+    height: 160px;
+  }
+  .main {
+    padding: 0 23px;
+  }
+  .sectionHeading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .sectionHeading > p {
+    max-width: 500px;
+  }
+  .plans {
+    padding-top: 55px;
+  }
+  .planGrid {
+    gap: 13px;
+  }
+  .plan {
+    padding: 20px;
+  }
+  .plan h3 {
+    font-size: 28px;
+  }
+  .plan li {
+    font-size: 11px;
+  }
+  .planner {
+    grid-template-columns: 1fr 1.15fr;
+    gap: 28px;
+    padding: 70px 0;
+  }
+  .plannerIntro h2 {
+    font-size: 47px;
+  }
+  .plannerIntro > p {
+    font-size: 13px;
+  }
+  .localNote p {
+    font-size: 11px;
+  }
+  .budgetCard {
+    padding: 23px;
+  }
+  .numberFields {
+    gap: 10px;
+  }
+  .numberFields label {
+    font-size: 10px;
+  }
+  .total strong {
+    font-size: 52px;
+  }
+  .budgetActions {
+    gap: 10px;
+  }
+  .budgetActions > button:first-child {
+    font-size: 11px;
+    padding: 10px 12px;
+  }
+  .budgetActions > button:last-child {
+    font-size: 10px;
+  }
+  .process > h2 {
+    font-size: 38px;
+    margin-bottom: 30px !important;
+  }
+  .process > div {
+    gap: 20px;
+  }
+  .process h3 {
+    font-size: 25px;
+  }
+  .process p {
+    font-size: 12px;
+  }
+  .contact {
+    gap: 30px;
+    padding: 50px 0 65px;
+  }
+  .contact h2 {
+    font-size: 45px;
+  }
+  .contact > div > p {
+    font-size: 12px;
+  }
+  .contactFields {
+    grid-template-columns: 1fr;
+    gap: 17px;
+  }
+  .heroButtons {
+    gap: 20px;
+  }
+  .heroButtons > button {
+    font-size: 13px;
+  }
+  .floatingEuro {
+    font-size: 45px;
+    bottom: 15px;
+    left: 18px;
+  }
+  .floatingEuro2 {
+    font-size: 37px;
+    right: 15px;
+    top: 20px;
+  }
+}
+@media (max-width: 599px) {
+  .blueTop {
+    padding-bottom: 100px;
+  }
+  .hero {
+    padding: 8px 20px 45px;
+    margin-top: 25px;
+  }
+  .cityLabel {
+    font-size: 10px;
+    margin-bottom: 22px;
+  }
+  .hero h1 {
+    font-size: clamp(46px, 12vw, 65px);
+    line-height: 0.98;
+  }
+  .hero > p {
+    font-size: 14px;
+    line-height: 1.7;
+    margin-top: 21px;
+  }
+  .heroButtons {
+    flex-direction: column;
+    gap: 20px;
+    margin-top: 24px;
+  }
+  .heroButtons > button {
+    font-size: 12px;
+    min-height: 44px;
+    padding: 11px 16px;
+  }
+  .heroButtons > a {
+    font-size: 11px;
+  }
+  .skyline {
+    height: 120px;
+    width: 100%;
+    object-fit: cover;
+  }
+  .floatingEuro {
+    display: none;
+  }
+  .floatingEuro2 {
+    font-size: 30px;
+    top: 20px;
+    right: -4px;
+    opacity: 0.12;
+  }
+  .main {
+    padding: 0 18px;
+  }
+  .plans {
+    padding-top: 45px;
+  }
+  .sectionHeading h2 {
+    font-size: 39px;
+  }
+  .sectionHeading > p {
+    font-size: 11px;
+  }
+  .planGrid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .plan {
+    padding: 25px;
+  }
+  .plan h3 {
+    font-size: 35px;
+    margin-top: 17px;
+  }
+  .plan p {
+    font-size: 13px;
+  }
+  .plan li {
+    font-size: 12px;
+  }
+  .plan ul {
+    gap: 10px;
+    margin: 20px 0;
+  }
+  .planNumber {
+    font-size: 32px;
+  }
+  .plan > button {
+    font-size: 12px;
+  }
+  .planner {
+    grid-template-columns: 1fr;
+    gap: 30px;
+    padding: 60px 0;
+  }
+  .plannerIntro h2 {
+    font-size: 50px;
+  }
+  .plannerIntro > p {
+    font-size: 14px;
+    max-width: none;
+  }
+  .localNote {
+    margin-top: 22px;
+    max-width: none;
+  }
+  .localNote p {
+    font-size: 12px;
+  }
+  .budgetCard {
+    padding: 24px;
+  }
+  .numberFields {
+    gap: 12px;
+  }
+  .numberFields label {
+    font-size: 11px;
+  }
+  .total strong {
+    font-size: 58px;
+  }
+  .budgetActions {
+    gap: 20px;
+  }
+  .budgetActions > button:first-child {
+    font-size: 12px;
+    padding: 11px 14px;
+  }
+  .budgetActions > button:last-child {
+    font-size: 11px;
+  }
+  .process {
+    padding-bottom: 55px;
+  }
+  .process > h2 {
+    text-align: left;
+    font-size: 40px;
+  }
+  .process > div {
+    grid-template-columns: 1fr;
+    gap: 26px;
+  }
+  .process article {
+    padding-top: 22px;
+  }
+  .process h3 {
+    font-size: 29px;
+    margin-top: 12px;
+  }
+  .process p {
+    font-size: 13px;
+  }
+  .contact {
+    grid-template-columns: 1fr;
+    gap: 35px;
+    padding: 45px 0 65px;
+  }
+  .contact h2 {
+    font-size: 48px;
+  }
+  .contact > div > p {
+    font-size: 14px;
+    max-width: none;
+  }
+  .contact .contactSmall {
+    font-size: 11px;
+    margin-top: 20px;
+  }
+  .contactFields {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .contactForm input {
+    font-size: 14px !important;
+  }
+  .contactForm textarea {
+    font-size: 14px !important;
+  }
+  .success {
+    padding: 28px;
+  }
+  .success h3 {
+    font-size: 34px;
+  }
+}
