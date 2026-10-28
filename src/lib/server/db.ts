@@ -2,6 +2,7 @@ import "server-only";
 import { createClient, type Client } from "@libsql/client";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { resolveDatabaseEnvironment } from "../database-environment.mjs";
 
 let database: Promise<Client> | undefined;
 
@@ -16,14 +17,11 @@ export function getDatabase(): Promise<Client> {
 }
 
 async function connect() {
-  const url = process.env.DATABASE_URL || "file:./data/worth.db";
+  const { url, authToken } = resolveDatabaseEnvironment(process.env);
   if (url.startsWith("file:") && !url.includes(":memory:")) {
     await mkdir(dirname(resolve(url.slice(5))), { recursive: true });
   }
-  const db = createClient({
-    url,
-    authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
-  });
+  const db = createClient({ url, authToken });
   try {
     await db.batch(
       [

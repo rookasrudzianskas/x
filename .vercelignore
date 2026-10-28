@@ -1,0 +1,16 @@
+# Runtime data and credentials belong in the deployed services, not the upload.
+.env*
+!.env.example
+data/
+.data/
+*.db
+*.db-shm
+*.db-wal
+
+# Build on Vercel's Linux runtime instead of uploading local build artifacts.
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+*.log

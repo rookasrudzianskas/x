@@ -89,6 +89,19 @@ Booking requests are saved in the database. This is an inquiry record, not an ap
 
 This is a standard Node.js Next.js app; deploy to a compatible Next.js host. Set `NEXT_PUBLIC_APP_URL` to its HTTPS origin. **Use a persistent remote libSQL database on ephemeral/serverless hosts**; the default local SQLite file is intended for local development or a server with a persistent disk. Configure email/X only when those integrations are needed.
 
+For Vercel, import `rookasrudzianskas/x` into the intended team and select Node.js 24. Configure these **Production** environment variables before deploying:
+
+- `DATABASE_URL`: the persistent remote database URL (`libsql://…` or `https://…`).
+- `DATABASE_AUTH_TOKEN`: a read/write credential for that database.
+- `NEXT_PUBLIC_APP_URL`: the exact production HTTPS origin, with no path or trailing slash.
+- `TRUST_PROXY=1`: use Vercel's overwritten forwarding header for per-client rate limits.
+
+The [Turso Cloud integration](https://vercel.com/marketplace/tursocloud/database) is also supported directly through its `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` variables. Use either that pair or the `DATABASE_*` pair. An explicitly set `DATABASE_URL` takes precedence and uses only `DATABASE_AUTH_TOKEN`; credentials are never mixed between databases.
+
+The Vercel build runs `npm run check:vercel-env` before building and stops if required deployment settings are missing or invalid. It checks optional email settings together, without printing their values. To enable email login, supply `RESEND_API_KEY`, verified `EMAIL_FROM`, and a random `AUTH_SECRET` of at least 32 characters. Live X lookup remains optional.
+
+Use a fresh Vercel build from the repository; do not upload a macOS prebuilt `.next` directory. `.vercelignore` excludes local databases and environment files from CLI uploads. Production forms are intentionally restricted to `NEXT_PUBLIC_APP_URL`; alternate deployment URLs need their own environment-specific origin or should redirect to the production alias. Preview deployments should use separate database credentials and their own HTTPS origin. After setting or changing environment variables, redeploy and verify report creation/reload and PNG downloads on the actual production alias.
+
 Before operating a public service, add the operator’s actual contact details and retention/deletion process to the privacy information. Third-party asset licensing should be resolved by the project owner before commercial redistribution. No deployment was implicitly tied to the original site’s private services.
 
 ## Scope and provenance

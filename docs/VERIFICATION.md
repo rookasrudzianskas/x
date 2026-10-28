@@ -6,7 +6,7 @@ Verified locally on 28 October 2026 with Node.js 24.22.1 and Next.js 16.4.3.
 
 - TypeScript, including generated Next.js route types: passed.
 - ESLint: passed without warnings.
-- Vitest: 188 tests passed across calculation, input validation, X sampling, report persistence, authentication, route security, offers, draft migration, exports, query identity and real PNG rendering.
+- Vitest: 272 tests passed across calculation, input validation, X sampling, report persistence, authentication, route security, offers, draft migration, exports, query identity, real PNG rendering and deployment configuration.
 - Production build: passed.
 - Production HTTP checks: calculator, report, comparison, creator, dashboard, brand and information routes returned 200 in both supported locale families. Unsupported locale and missing public creator profile returned 404. Robots, sitemap and PNG social-image endpoints returned their expected content types.
 
@@ -37,6 +37,16 @@ Security tests include cross-origin mutation rejection, body-size limits, OTP ex
 - Production build, TypeScript and ESLint pass. Production route checks returned the expected HTML/PNG/status codes.
 
 The follow-up Chrome interaction and mobile-layout pass could not be completed: the browser tool continued reporting that local browser use was disabled in Work settings, including after a fresh connection attempt. The earlier Chrome evidence above applies to the initial release; the new offer controls, comparison editing and dialog changes have automated coverage and code review, but are not claimed as browser-verified in this pass.
+
+## Vercel preparation
+
+- The Vercel-specific build runs an environment preflight; the ordinary local build still works without external services.
+- Seventy preflight tests cover missing settings, secure remote database URLs, exact HTTPS app origins, proxy configuration, optional email consistency, native Turso variables, and diagnostics that do not disclose values.
+- Fourteen database environment cases plus the existing initialization test verify explicit-pair precedence, Turso integration variables, no credential mixing and the unchanged local SQLite default.
+- All 272 tests, ESLint, and the production build (including TypeScript) passed. The Vercel build command was exercised with non-secret fixture values and made no remote database connection; this does not verify a real hosted database.
+- `.vercelignore` excludes local databases, environment files and local build artifacts from CLI uploads.
+
+Deployment is pending authenticated access to the requested Vercel team and a persistent remote database. The Vercel CLI reported that it was logged out; no production URL or successful live deployment is claimed. Browser access also remained disabled in the tool when retried.
 
 ## Boundaries
 
