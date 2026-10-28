@@ -39,13 +39,17 @@ Checks and browser walkthroughs are recorded in [`docs/VERIFICATION.md`](docs/VE
 | ------------------------------------ | -------------------------------------------------------------------------- |
 | `/{en,lt}/worth`                     | Calculator, recent/top board, paginated examples, brand section, help      |
 | `/{en,lt}/worth/:handle`             | Report, editable assumptions, chart, methodology, PNG download, share/copy |
-| `/{en,lt}/worth/:handle/vs/:other`   | Comparison                                                                 |
+| `/{en,lt}/worth/:handle/vs/:other`   | Comparison, copy/share, combined PNG export                                |
 | `/{en,lt}/creators`                  | Creator landing and setup; X and local LinkedIn media-kit drafts           |
 | `/{en,lt}/creators/:handle`          | Published creator profile or prefilled setup                               |
 | `/{en,lt}/dashboard`                 | Creator draft management and account controls                              |
 | `/{en,lt}/brands`                    | Campaign budget planner and saved booking inquiry                          |
 | `/{en,lt}/methodology`               | Formula, data provenance, city/currency sources                            |
 | `/{en,lt}/privacy`, `/{en,lt}/terms` | Accurate application information                                           |
+
+Creator pages support sponsored posts, reposts, quote posts, banners, bio links, badges and up to three custom offers. Offers are opt-in, priced in EUR to two decimals, and billed per placement or per week. They appear in the profile and exported media kit; they do not create payments or bookings. Older single-rate drafts are migrated without discarding their post rate. `/linkedin` (and locale-prefixed equivalents) opens the local LinkedIn media-kit builder.
+
+Reports also provide original-style `.../card.png` downloads and `.../opengraph-image` previews, including comparisons. Saved report IDs remain in the URL for both sides. Duplicate query parameters consistently use the first value; supplied invalid IDs show an error instead of substituting a sample. Server-generated images use bundled fonts and graphics. Unsupported display-name glyphs are omitted only in those images (with the handle as a fallback), so emoji/CJK names do not require external font or emoji-CDN requests; the original name remains in the application.
 
 Manual reports are unlisted by default. The creator explicitly chooses whether to add a report to the public board. Anyone with a report URL can open it; do not place private information in a report. Sample profiles are fictional and are always labelled. No fake payout totals, customer claims, audience verification or paid campaigns are presented as real.
 

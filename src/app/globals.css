@@ -978,7 +978,7 @@ a svg {
 }
 .share-worth {
   font-family: var(--font-pixel), serif;
-  font-size: 78px;
+  font-size: calc(78px * var(--value-scale, 1));
   letter-spacing: -0.04em;
   line-height: 1.1;
   margin-top: 4px;
@@ -994,7 +994,7 @@ a svg {
 }
 .share-month strong {
   font-family: var(--font-pixel), serif;
-  font-size: 43px;
+  font-size: calc(43px * var(--value-scale, 1));
   font-weight: 400;
   letter-spacing: -0.025em;
 }
@@ -1226,7 +1226,7 @@ a svg {
   margin-top: 20px;
   padding: 20px;
 }
-.compare-form > label {
+.compare-form > p {
   font-size: 12px;
   font-weight: 500;
 }
@@ -1417,7 +1417,7 @@ a svg {
   height: 36px;
 }
 .share-card-compact .share-worth {
-  font-size: 58px;
+  font-size: calc(58px * var(--value-scale, 1));
 }
 .share-card-compact .share-value-label {
   font-size: 10px;
@@ -1428,7 +1428,7 @@ a svg {
   margin-top: 7px;
 }
 .share-card-compact .share-month strong {
-  font-size: 32px;
+  font-size: calc(32px * var(--value-scale, 1));
 }
 .share-card-compact .share-month > span {
   font-size: 11px;
@@ -1713,7 +1713,7 @@ a svg {
     display: none;
   }
   .share-card-compact .share-worth {
-    font-size: 53px;
+    font-size: calc(53px * var(--value-scale, 1));
   }
   .launch-card {
     gap: 28px;
@@ -2053,7 +2053,7 @@ a svg {
     max-width: 240px;
   }
   .share-worth {
-    font-size: 61px;
+    font-size: calc(61px * var(--value-scale, 1));
     margin-top: 4px;
   }
   .share-month {
@@ -2062,7 +2062,7 @@ a svg {
     max-width: 80%;
   }
   .share-month strong {
-    font-size: 34px;
+    font-size: calc(34px * var(--value-scale, 1));
   }
   .share-month > span {
     font-size: 11px;
@@ -2239,7 +2239,7 @@ a svg {
     height: 347px;
   }
   .share-card-compact .share-worth {
-    font-size: 61px;
+    font-size: calc(61px * var(--value-scale, 1));
   }
   .share-card-compact .share-card-brand {
     display: flex;
@@ -2321,10 +2321,10 @@ a svg {
   }
   .share-worth,
   .share-card-compact .share-worth {
-    font-size: 55px;
+    font-size: calc(55px * var(--value-scale, 1));
   }
   .share-month strong {
-    font-size: 31px;
+    font-size: calc(31px * var(--value-scale, 1));
   }
   .metrics-grid {
     grid-template-columns: 1fr;
@@ -2390,5 +2390,68 @@ a svg {
   .button:hover,
   .help-button:hover {
     transform: none;
+  }
+}
+
+/* Keep long input and translated figures within the reference layout. */
+.metrics-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.metrics-grid label,
+.report-facts > div,
+.scenario-grid > div,
+.projection-heading > div {
+  min-width: 0;
+}
+.report-facts strong,
+.scenario-grid strong {
+  overflow-wrap: anywhere;
+}
+.share-card-brand {
+  flex-shrink: 0;
+}
+.share-worth {
+  max-width: 100%;
+  white-space: nowrap;
+}
+.share-month strong {
+  max-width: 100%;
+  white-space: nowrap;
+}
+.share-source {
+  max-width: calc(100% - 68px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projection-heading > strong {
+  max-width: 48%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-align: right;
+}
+.comparison-grid > div {
+  min-width: 0;
+}
+.board-scroll:focus-visible {
+  outline-offset: -3px;
+}
+@media (max-width: 380px) {
+  .share-identity > div {
+    max-width: calc(100% - 88px);
+  }
+  .share-month,
+  .share-card-compact .share-month {
+    right: 24px;
+  }
+  .share-source,
+  .share-card-compact .share-source {
+    max-width: calc(100% - 52px);
+  }
+  .report-facts strong {
+    font-size: 18px;
   }
 }

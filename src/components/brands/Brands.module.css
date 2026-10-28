@@ -826,3 +826,11 @@
     font-size: 34px;
   }
 }
+
+.formFields {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}

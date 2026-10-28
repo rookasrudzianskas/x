@@ -12,130 +12,30 @@ import {
 import { ArrowLeft, ArrowRight, X } from "lucide-react";
 import styles from "./Creator.module.css";
 
-export type Locale = "en" | "lt";
-export type CreatorProfile = {
-  name: string;
-  handle: string;
-  bio: string;
-  location: string;
-  niche: string;
-  rate: number;
-  published: boolean;
-  platform?: "x" | "linkedin";
-  profileUrl?: string;
-};
+import {
+  DRAFT_KEY,
+  copy,
+  creatorLocaleHref,
+  parseCreatorDraft,
+  profileExport,
+  type CreatorProfile,
+  type Locale,
+} from "./profile-data";
+export { copy, emptyProfile, euro } from "./profile-data";
+export type { CreatorProfile, Locale } from "./profile-data";
 export type SessionUser = { email: string };
-const DRAFT_KEY = "vilnius-worth.creator-draft.v1";
-export const copy = <T,>(locale: Locale, en: T, lt: T): T =>
-  locale === "lt" ? lt : en;
-export const euro = (value: number, locale: Locale) =>
-  new Intl.NumberFormat(locale === "lt" ? "lt-LT" : "en-IE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-  }).format(value);
-export const emptyProfile = (handle = ""): CreatorProfile => ({
-  name: "",
-  handle,
-  bio: "",
-  location: "Vilnius, Lithuania",
-  niche: "",
-  rate: 50,
-  published: false,
-  platform: "x",
-});
 
-function checkedDraft(value: unknown): CreatorProfile | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const entry = value as Record<string, unknown>;
-  if (
-    entry.version !== 1 ||
-    !entry.profile ||
-    typeof entry.profile !== "object" ||
-    Array.isArray(entry.profile)
-  )
-    return null;
-  const profile = entry.profile as Record<string, unknown>;
-  const boundedString = (key: string, max: number, required = false) =>
-    typeof profile[key] === "string" &&
-    (profile[key] as string).length <= max &&
-    (!required || (profile[key] as string).trim().length > 0);
-  if (
-    !boundedString("name", 80, true) ||
-    !boundedString("handle", 100, true) ||
-    !boundedString("bio", 500) ||
-    !boundedString("location", 100, true) ||
-    !boundedString("niche", 100)
-  )
-    return null;
-  if (
-    typeof profile.rate !== "number" ||
-    !Number.isFinite(profile.rate) ||
-    profile.rate < 0 ||
-    profile.rate > 1_000_000 ||
-    typeof profile.published !== "boolean"
-  )
-    return null;
-  if (
-    profile.platform !== undefined &&
-    profile.platform !== "x" &&
-    profile.platform !== "linkedin"
-  )
-    return null;
-  const platform = profile.platform === "linkedin" ? "linkedin" : "x";
-  if (
-    !(
-      platform === "linkedin" ? /^[A-Za-z0-9-]{3,100}$/ : /^[A-Za-z0-9_]{1,15}$/
-    ).test(profile.handle as string)
-  )
-    return null;
-  if (profile.profileUrl !== undefined) {
-    if (
-      typeof profile.profileUrl !== "string" ||
-      profile.profileUrl.length > 300
-    )
-      return null;
-    if (profile.profileUrl) {
-      try {
-        const url = new URL(profile.profileUrl);
-        const hosts =
-          platform === "linkedin"
-            ? ["linkedin.com", "www.linkedin.com"]
-            : ["x.com", "www.x.com", "twitter.com", "www.twitter.com"];
-        if (
-          url.protocol !== "https:" ||
-          url.username ||
-          url.password ||
-          url.port ||
-          !hosts.includes(url.hostname)
-        )
-          return null;
-      } catch {
-        return null;
-      }
-    }
-  }
-  return {
-    name: profile.name as string,
-    handle: profile.handle as string,
-    bio: profile.bio as string,
-    location: profile.location as string,
-    niche: profile.niche as string,
-    rate: profile.rate,
-    published: false,
-    platform,
-    ...(profile.profileUrl ? { profileUrl: profile.profileUrl as string } : {}),
-  };
-}
 export function readDraft(): CreatorProfile | null {
   try {
-    return checkedDraft(JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"));
+    return parseCreatorDraft(
+      JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"),
+    );
   } catch {
     return null;
   }
 }
 export function saveDraft(profile: CreatorProfile) {
-  const checked = checkedDraft({
+  const checked = parseCreatorDraft({
     version: 1,
     profile: { ...profile, published: false },
   });
@@ -144,14 +44,28 @@ export function saveDraft(profile: CreatorProfile) {
       "Please check the profile fields before saving.",
       "validation_error",
     );
-  localStorage.setItem(
-    DRAFT_KEY,
-    JSON.stringify({ version: 1, profile: checked }),
-  );
+  try {
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ version: 1, profile: checked }),
+    );
+  } catch {
+    throw new RequestError(
+      "This browser could not save your draft. Download your media kit or save to your account instead.",
+      "storage_unavailable",
+    );
+  }
   window.dispatchEvent(new Event("creator-draft-change"));
 }
 export function clearDraft() {
-  localStorage.removeItem(DRAFT_KEY);
+  try {
+    localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    throw new RequestError(
+      "This browser could not remove the local draft. Please try again.",
+      "storage_unavailable",
+    );
+  }
   window.dispatchEvent(new Event("creator-draft-change"));
 }
 export function downloadProfile(
@@ -159,41 +73,24 @@ export function downloadProfile(
   locale: Locale,
   format: "json" | "html" = "json",
 ) {
-  const escape = (value: string) =>
-    value.replace(
-      /[&<>"']/g,
-      (char) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[char]!,
-    );
-  const body =
-    format === "json"
-      ? JSON.stringify(
-          { ...profile, exportedAt: new Date().toISOString(), currency: "EUR" },
-          null,
-          2,
-        )
-      : `<!doctype html><html lang="${locale}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(profile.name)} — ${copy(locale, "Media kit", "Kūrėjo pristatymas")}</title><style>body{font:18px/1.6 system-ui;max-width:760px;margin:8vh auto;padding:32px;color:#1a1a1a}h1{font-size:54px;line-height:1.1}header{border-bottom:8px solid #03f;padding-bottom:32px}small{color:#6e6e6e}strong{color:#03f}.rate{font-size:40px}p{white-space:pre-wrap}</style><header><small>VILNIUS · ${copy(locale, "CREATOR MEDIA KIT", "KŪRĖJO PRISTATYMAS")}</small><h1>${escape(profile.name)}</h1><p>@${escape(profile.handle)} · ${escape(profile.location)}</p></header><h2>${escape(profile.niche)}</h2><p>${escape(profile.bio)}</p><p class="rate"><strong>${euro(profile.rate, locale)}</strong> / ${copy(locale, "sponsored post", "reklaminį įrašą")}</p><small>${copy(locale, "Self-reported profile. Rates are indicative and subject to agreement. X identity is unverified.", "Kūrėjo pateikti duomenys. Įkainiai preliminarūs ir derinami individualiai. X tapatybė nepatvirtinta.")}</small></html>`;
   const url = URL.createObjectURL(
-    new Blob([body], {
+    new Blob([profileExport(profile, locale, format)], {
       type: format === "json" ? "application/json" : "text/html;charset=utf-8",
     }),
   );
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `${profile.handle || "creator"}-media-kit.${format}`;
+  document.body.appendChild(anchor);
   anchor.click();
+  anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export class RequestError extends Error {
   constructor(
     message: string,
     public code: string,
+    public retryAfter?: number,
   ) {
     super(message);
   }
@@ -216,6 +113,10 @@ export function requestError(locale: Locale, error: unknown) {
     invalid_origin: "Užklausą pateik iš šios svetainės.",
     body_too_large: "Duomenų per daug. Sutrumpink tekstą ir bandyk dar kartą.",
     service_error: "Paslauga laikinai nepasiekiama. Bandyk dar kartą vėliau.",
+    network_error:
+      "Ryšys nutrūko. Patikrink interneto ryšį ir bandyk dar kartą.",
+    storage_unavailable:
+      "Naršyklė negali išsaugoti vietinių duomenų. Atsisiųsk pristatymą arba išsaugok paskyroje.",
   };
   return error instanceof RequestError
     ? (messages[error.code] ?? messages.service_error)
@@ -225,23 +126,42 @@ export async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
+  options: { signal?: AbortSignal } = {},
 ): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    headers:
-      body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok)
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers:
+        body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw new RequestError(
+      "Could not connect. Check your internet connection and try again.",
+      "network_error",
+    );
+  }
+  const result = await response.json().catch(() => null);
+  if (!result || typeof result !== "object" || Array.isArray(result))
+    throw new RequestError(
+      "The server returned an unreadable response. Please try again.",
+      "service_error",
+    );
+  if (!response.ok) {
+    const retry = Number(response.headers.get("retry-after"));
     throw new RequestError(
       typeof result.error === "string"
         ? result.error
         : result.error?.message ||
-            result.message ||
-            `Request failed (${response.status})`,
+          result.message ||
+          `Request failed (${response.status})`,
       result.code || result.error?.code || "service_error",
+      Number.isFinite(retry) && retry > 0 ? retry : undefined,
     );
+  }
   return result as T;
 }
 
@@ -274,7 +194,7 @@ export function CreatorHeader({
     emptyLocationSuffix,
   );
   const nextLocale = locale === "en" ? "lt" : "en";
-  const languageHref = `${pathname.replace(/^\/(en|lt)(?=\/|$)/, `/${nextLocale}`)}${suffix}`;
+  const languageHref = creatorLocaleHref(pathname, nextLocale, suffix);
   return (
     <header className={`${styles.header} ${dark ? styles.headerDark : ""}`}>
       <Link href={`/${locale}/worth`} className={styles.wordmark}>
@@ -359,6 +279,17 @@ export function CreatorFooter({ locale }: { locale: Locale }) {
 
 const dialogStack: HTMLDivElement[] = [];
 let originalBodyOverflow = "";
+const focusableSelector =
+  'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]';
+function syncDialogStack() {
+  for (const dialog of dialogStack) {
+    const top = dialog === dialogStack.at(-1);
+    dialog.inert = !top;
+    dialog.setAttribute("aria-modal", String(top));
+    if (top) dialog.removeAttribute("aria-hidden");
+    else dialog.setAttribute("aria-hidden", "true");
+  }
+}
 
 export function Dialog({
   title,
@@ -366,14 +297,20 @@ export function Dialog({
   onClose,
   locale,
   wide = false,
+  closeDisabled = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   locale: Locale;
   wide?: boolean;
+  closeDisabled?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const latest = useRef({ onClose, closeDisabled });
+  useEffect(() => {
+    latest.current = { onClose, closeDisabled };
+  }, [onClose, closeDisabled]);
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -381,61 +318,87 @@ export function Dialog({
     if (dialogStack.length === 0)
       originalBodyOverflow = document.body.style.overflow;
     dialogStack.push(node);
+    syncDialogStack();
     document.body.style.overflow = "hidden";
     const focusables = () =>
-      Array.from(
-        node.querySelectorAll<HTMLElement>(
-          'button:not([disabled]),input:not([disabled]),select,textarea,a[href],[tabindex="0"]',
-        ),
-      ).filter((element) => element.getClientRects().length > 0);
-    (
-      node.querySelector<HTMLElement>("input,select,textarea") ??
-      focusables()[0]
-    )?.focus();
+      Array.from(node.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+        (element) =>
+          element.getClientRects().length > 0 && !element.closest("[inert]"),
+      );
+    const focusFirst = () =>
+      (
+        node.querySelector<HTMLElement>(
+          "input:not(:disabled),select:not(:disabled),textarea:not(:disabled)",
+        ) ??
+        focusables()[0] ??
+        node
+      ).focus();
+    focusFirst();
     const keydown = (event: KeyboardEvent) => {
       if (dialogStack.at(-1) !== node) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        onClose();
+        if (!latest.current.closeDisabled) latest.current.onClose();
       }
       if (event.key === "Tab") {
         const items = focusables();
-        if (!items.length) return;
-        if (event.shiftKey && document.activeElement === items[0]) {
+        if (!items.length) {
           event.preventDefault();
-          items.at(-1)?.focus();
+          node.focus();
+          return;
         }
-        if (!event.shiftKey && document.activeElement === items.at(-1)) {
+        if (
+          !node.contains(document.activeElement) ||
+          (event.shiftKey && document.activeElement === items[0]) ||
+          (!event.shiftKey && document.activeElement === items.at(-1))
+        ) {
           event.preventDefault();
-          items[0].focus();
+          (event.shiftKey ? items.at(-1) : items[0])?.focus();
         }
       }
     };
+    const focusin = (event: FocusEvent) => {
+      if (
+        dialogStack.at(-1) === node &&
+        event.target instanceof Node &&
+        !node.contains(event.target)
+      )
+        focusFirst();
+    };
     document.addEventListener("keydown", keydown);
+    document.addEventListener("focusin", focusin);
     return () => {
       document.removeEventListener("keydown", keydown);
+      document.removeEventListener("focusin", focusin);
       const index = dialogStack.indexOf(node);
       const wasTop = dialogStack.at(-1) === node;
       if (index !== -1) dialogStack.splice(index, 1);
+      syncDialogStack();
       if (dialogStack.length === 0)
         document.body.style.overflow = originalBodyOverflow;
       if (wasTop) {
-        if (before?.isConnected) before.focus();
+        const next = dialogStack.at(-1);
+        if (before?.isConnected && (!next || next.contains(before)))
+          before.focus();
         else
-          dialogStack
-            .at(-1)
-            ?.querySelector<HTMLElement>("input,button,select,textarea,a")
-            ?.focus();
+          (
+            next?.querySelector<HTMLElement>(focusableSelector) ?? next
+          )?.focus();
       }
     };
-  }, [onClose]);
+  }, []);
   return (
     <div
       data-modal-root
       className={styles.overlay}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (
+          event.target === event.currentTarget &&
+          dialogStack.at(-1) === ref.current &&
+          !closeDisabled
+        )
+          onClose();
       }}
     >
       <div
@@ -444,12 +407,15 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
       >
         <div className={styles.dialogTop}>
           <h2>{title}</h2>
           <button
+            type="button"
             className={styles.iconButton}
             onClick={onClose}
+            disabled={closeDisabled}
             aria-label={copy(locale, "Close", "Uždaryti")}
           >
             <X size={20} />
@@ -475,16 +441,37 @@ export function LoginDialog({
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  const [retryUntil, setRetryUntil] = useState(0);
+  const [seconds, setSeconds] = useState(0);
+  const inFlight = useRef(false);
+  const codeInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!retryUntil) return;
+    const tick = () =>
+      setSeconds(Math.max(0, Math.ceil((retryUntil - Date.now()) / 1000)));
+    const timer = window.setInterval(tick, 500);
+    return () => window.clearInterval(timer);
+  }, [retryUntil]);
+  useEffect(() => {
+    if (sent && !busy) codeInput.current?.focus();
+  }, [sent, busy]);
+  function cooldown(seconds: number) {
+    setSeconds(seconds);
+    setRetryUntil(Date.now() + seconds * 1000);
+  }
+  async function request(kind: "send" | "verify") {
+    if (inFlight.current || (kind === "send" && Date.now() < retryUntil))
+      return;
+    const submittedEmail = email.trim().toLowerCase();
+    inFlight.current = true;
     setBusy(true);
     setError("");
     try {
-      if (sent) {
+      if (kind === "verify") {
         const result = await api<{ user: SessionUser }>(
           "/api/auth/verify",
           "POST",
-          { email, code },
+          { email: submittedEmail, code },
         );
         if (!result.user?.email)
           throw new RequestError(
@@ -494,12 +481,31 @@ export function LoginDialog({
         onSuccess(result.user);
         onClose();
       } else {
-        await api("/api/auth/send-code", "POST", { email, locale });
+        const result = await api<{ ok: boolean; retryAfter?: number }>(
+          "/api/auth/send-code",
+          "POST",
+          { email: submittedEmail, locale },
+        );
+        if (!result.ok)
+          throw new RequestError(
+            "The email could not be confirmed. Please try again.",
+            "service_error",
+          );
+        setEmail(submittedEmail);
         setSent(true);
+        setCode("");
+        cooldown(
+          Number.isFinite(result.retryAfter) && result.retryAfter! > 0
+            ? result.retryAfter!
+            : 60,
+        );
       }
     } catch (error) {
+      if (error instanceof RequestError && error.retryAfter)
+        cooldown(error.retryAfter);
       setError(requestError(locale, error));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -512,6 +518,7 @@ export function LoginDialog({
       )}
       onClose={onClose}
       locale={locale}
+      closeDisabled={busy}
     >
       <p className={styles.muted}>
         {sent
@@ -526,16 +533,25 @@ export function LoginDialog({
               "Prisijunk el. paštu ir išsaugok profilį paskyroje. Vietinį juodraštį gali kurti ir neprisijungęs.",
             )}
       </p>
-      <form onSubmit={submit} className={styles.form}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void request(sent ? "verify" : "send");
+        }}
+        className={styles.form}
+        aria-busy={busy}
+      >
         {sent ? (
           <label>
             {copy(locale, "Verification code", "Patvirtinimo kodas")}
             <input
+              ref={codeInput}
               inputMode="numeric"
               autoComplete="one-time-code"
               pattern="[0-9]{6}"
               maxLength={6}
               required
+              disabled={busy}
               value={code}
               onChange={(event) =>
                 setCode(event.target.value.replace(/\D/g, ""))
@@ -550,6 +566,8 @@ export function LoginDialog({
               type="email"
               autoComplete="email"
               required
+              maxLength={254}
+              disabled={busy}
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               placeholder="you@example.com"
@@ -561,33 +579,55 @@ export function LoginDialog({
             {error}
           </p>
         )}
-        <button className={styles.primaryButton} disabled={busy}>
+        <button
+          className={styles.primaryButton}
+          disabled={busy || (!sent && seconds > 0)}
+        >
           {busy
             ? copy(locale, "Please wait…", "Palauk…")
-            : copy(
-                locale,
-                sent ? "Verify & continue" : "Continue with email",
-                sent ? "Patvirtinti ir tęsti" : "Tęsti el. paštu",
-              )}
+            : !sent && seconds > 0
+              ? copy(
+                  locale,
+                  `Try again in ${seconds}s`,
+                  `Bandyk po ${seconds} sek.`,
+                )
+              : copy(
+                  locale,
+                  sent ? "Verify & continue" : "Continue with email",
+                  sent ? "Patvirtinti ir tęsti" : "Tęsti el. paštu",
+                )}
           <ArrowRight size={16} />
         </button>
         {sent && (
-          <button
-            type="button"
-            className={styles.textButton}
-            onClick={() => {
-              setSent(false);
-              setCode("");
-              setError("");
-            }}
-          >
-            <ArrowLeft size={14} />
-            {copy(
-              locale,
-              "Use another email or resend",
-              "Keisti adresą arba siųsti dar kartą",
-            )}
-          </button>
+          <div className={styles.exportActions}>
+            <button
+              type="button"
+              className={styles.textButton}
+              disabled={busy || seconds > 0}
+              onClick={() => void request("send")}
+            >
+              {seconds > 0
+                ? copy(
+                    locale,
+                    `Resend in ${seconds}s`,
+                    `Siųsti po ${seconds} sek.`,
+                  )
+                : copy(locale, "Resend code", "Siųsti kodą dar kartą")}
+            </button>
+            <button
+              type="button"
+              className={styles.textButton}
+              disabled={busy}
+              onClick={() => {
+                setSent(false);
+                setCode("");
+                setError("");
+              }}
+            >
+              <ArrowLeft size={14} />
+              {copy(locale, "Use another email", "Keisti el. pašto adresą")}
+            </button>
+          </div>
         )}
       </form>
     </Dialog>

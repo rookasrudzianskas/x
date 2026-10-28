@@ -34,55 +34,30 @@ export function equalHashes(left: string, right: string): boolean {
   return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
 }
 
-export async function issueOtp(email: string, now = Date.now()) {
+export function generateOtp(email: string, now = Date.now()) {
   const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
   const salt = randomBytes(24).toString("hex");
   const codeHash = hashOtp(email, code, salt);
+  return { code, salt, codeHash, expiresAt: now + OTP_TTL_MS };
+}
+
+/** Called only after the email provider accepts the message. */
+export async function storeOtp(
+  email: string,
+  challenge: ReturnType<typeof generateOtp>,
+) {
   const db = await getDatabase();
   await db.execute({
     sql: `INSERT INTO otp_codes(email,salt,code_hash,expires_at,attempts,used_at) VALUES(?,?,?,?,0,NULL)
-      ON CONFLICT(email) DO UPDATE SET salt=excluded.salt,code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0,used_at=NULL`,
-    args: [email, salt, codeHash, now + OTP_TTL_MS],
-  });
-  return { code, salt };
-}
-
-export async function revokeOtp(email: string, salt: string) {
-  await (
-    await getDatabase()
-  ).execute({
-    sql: "DELETE FROM otp_codes WHERE email=? AND salt=?",
-    args: [email, salt],
+      ON CONFLICT(email) DO UPDATE SET salt=excluded.salt,code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0,used_at=NULL
+      WHERE otp_codes.expires_at <= excluded.expires_at`,
+    args: [email, challenge.salt, challenge.codeHash, challenge.expiresAt],
   });
 }
 
-/** A conditional atomic update makes successful verification single-use under races. */
-export async function consumeOtp(
-  email: string,
-  code: string,
-  now = Date.now(),
-): Promise<boolean> {
-  authSecret();
-  const db = await getDatabase();
-  const result = await db.execute({
-    sql: "SELECT * FROM otp_codes WHERE email=?",
-    args: [email],
-  });
-  const row = result.rows[0];
-  if (
-    !row ||
-    row.used_at !== null ||
-    Number(row.expires_at) <= now ||
-    Number(row.attempts) >= OTP_MAX_ATTEMPTS
-  )
-    return false;
-  const valid =
-    /^\d{6}$/.test(code) &&
-    equalHashes(hashOtp(email, code, String(row.salt)), String(row.code_hash));
-  const updated = await db.execute({
-    sql: `UPDATE otp_codes SET attempts=attempts+1, used_at=?
-      WHERE email=? AND salt=? AND used_at IS NULL AND expires_at>? AND attempts<? RETURNING email`,
-    args: [valid ? now : null, email, String(row.salt), now, OTP_MAX_ATTEMPTS],
-  });
-  return valid && updated.rows.length === 1;
+/** Internal setup helper; HTTP delivery uses generate → send → store. */
+export async function issueOtp(email: string, now = Date.now()) {
+  const challenge = generateOtp(email, now);
+  await storeOtp(email, challenge);
+  return { code: challenge.code, salt: challenge.salt };
 }

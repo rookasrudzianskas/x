@@ -6,7 +6,6 @@ vi.mock("server-only", () => ({}));
 
 import { getDatabase } from "./db";
 import {
-  consumeOtp,
   equalHashes,
   hashOtp,
   issueOtp,
@@ -16,9 +15,24 @@ import {
 import { rateLimit } from "./rate-limit";
 import { bookingSchema, creatorSchema, reportSchema } from "./schemas";
 import { json, readJson, requireSameOrigin } from "./http";
-import { createSession, getUser, logout, SESSION_COOKIE } from "./auth";
+import {
+  verifyAndCreateSession,
+  getUser,
+  logout,
+  SESSION_COOKIE,
+} from "./auth";
 import { findReport, getBoard, saveReport } from "./reports";
 import { DEFAULT_ESTIMATE_INPUT } from "../estimate";
+
+async function consumeOtp(email: string, code: string, now = Date.now()) {
+  return !!(await verifyAndCreateSession(
+    email,
+    code,
+    new Request("https://worth.example"),
+    json({}),
+    now,
+  ));
+}
 
 beforeAll(() => {
   vi.stubEnv("DATABASE_URL", "file::memory:");
@@ -199,8 +213,10 @@ describe("request boundaries", () => {
 describe("server sessions", () => {
   it("uses an opaque hashed token, secure HttpOnly cookie, and revokes on logout", async () => {
     const response = json({});
-    const user = await createSession(
+    const { code } = await issueOtp("session@example.com");
+    const user = await verifyAndCreateSession(
       "session@example.com",
+      code,
       new Request("https://worth.example"),
       response,
     );

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Copy,
@@ -24,12 +24,15 @@ import {
   downloadProfile,
   LoginDialog,
   readDraft,
+  requestError,
+  RequestError,
   saveDraft,
   type CreatorProfile,
   type Locale,
   type SessionUser,
 } from "./Shared";
 import styles from "./Creator.module.css";
+import { parseCreatorProfile } from "./profile-data";
 
 export function CreatorDashboard({ locale }: { locale: Locale }) {
   const [local, setLocal] = useState<CreatorProfile | null>(null);
@@ -38,46 +41,98 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [login, setLogin] = useState(false);
-  const [editor, setEditor] = useState(false);
+  const [editor, setEditor] = useState<CreatorProfile | null>(null);
   const [message, setMessage] = useState("");
   const [deleted, setDeleted] = useState<CreatorProfile | null>(null);
+  const [accountError, setAccountError] = useState("");
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const accountRequest = useRef<AbortController | null>(null);
+  const logoutFlight = useRef(false);
   const profile = source === "account" ? remote : local;
   const closeLogin = useCallback(() => setLogin(false), []);
-  const closeEditor = useCallback(() => setEditor(false), []);
-  const loadRemote = useCallback(async () => {
-    try {
-      const result = await api<{ profile: CreatorProfile | null }>(
-        "/api/creator",
-      );
-      setRemote(result.profile);
-      if (result.profile) setSource("account");
-    } catch {
-      /* A local draft remains available when account storage cannot be read. */
-    }
-  }, []);
+  const closeEditor = useCallback(() => setEditor(null), []);
+  const loadAccount = useCallback(() => {
+    if (logoutFlight.current) return Promise.resolve();
+    accountRequest.current?.abort();
+    const controller = new AbortController();
+    accountRequest.current = controller;
+    return api<{ user: SessionUser | null }>(
+      "/api/auth/session",
+      "GET",
+      undefined,
+      { signal: controller.signal },
+    )
+      .then(async (session) => {
+        if (controller.signal.aborted) return;
+        if (session.user !== null && !session.user?.email)
+          throw new RequestError(
+            "Your account session could not be read. Please try again.",
+            "service_error",
+          );
+        setUser(session.user);
+        if (!session.user) {
+          setRemote(null);
+          setSource("local");
+          return;
+        }
+        const result = await api<{ profile: unknown }>(
+          "/api/creator",
+          "GET",
+          undefined,
+          { signal: controller.signal },
+        );
+        if (controller.signal.aborted) return;
+        const profile =
+          result.profile === null ? null : parseCreatorProfile(result.profile);
+        if (result.profile !== null && !profile)
+          throw new RequestError(
+            "Your saved profile could not be read. Please try again.",
+            "service_error",
+          );
+        setRemote(profile);
+        if (profile) setSource("account");
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted)
+          setAccountError(requestError(locale, error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setAccountLoading(false);
+          setLoading(false);
+        }
+      });
+  }, [locale]);
   useEffect(() => {
-    const update = () => setLocal(readDraft());
+    const update = () => {
+      const draft = readDraft();
+      setLocal(draft);
+      if (draft) setDeleted(null);
+    };
     update();
     window.addEventListener("creator-draft-change", update);
     window.addEventListener("storage", update);
-    void api<{ user: SessionUser | null }>("/api/auth/session")
-      .then(async (result) => {
-        setUser(result.user);
-        if (result.user) await loadRemote();
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    void loadAccount();
     return () => {
+      accountRequest.current?.abort();
       window.removeEventListener("creator-draft-change", update);
       window.removeEventListener("storage", update);
     };
-  }, [loadRemote]);
+  }, [loadAccount]);
   async function logout() {
+    if (logoutFlight.current) return;
+    logoutFlight.current = true;
+    accountRequest.current?.abort();
+    setAccountLoading(false);
+    setLoading(false);
+    setLoggingOut(true);
     try {
       await api("/api/auth/logout", "POST");
       setUser(null);
       setRemote(null);
       setSource("local");
+      setAccountError("");
       setMessage(
         copy(
           locale,
@@ -85,14 +140,11 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
           "Atsijungei. Vietinis juodraštis liko šiame įrenginyje.",
         ),
       );
-    } catch {
-      setMessage(
-        copy(
-          locale,
-          "Could not sign out. Please try again.",
-          "Atsijungti nepavyko. Bandyk dar kartą.",
-        ),
-      );
+    } catch (error) {
+      setMessage(requestError(locale, error));
+    } finally {
+      logoutFlight.current = false;
+      setLoggingOut(false);
     }
   }
   async function share() {
@@ -130,15 +182,34 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
       )
     )
       return;
-    setDeleted(local);
-    clearDraft();
-    setMessage(
-      copy(
-        locale,
-        "Local draft removed. You can undo this below.",
-        "Vietinis juodraštis pašalintas. Toliau gali atšaukti veiksmą.",
-      ),
-    );
+    try {
+      clearDraft();
+      setDeleted(local);
+      setMessage(
+        copy(
+          locale,
+          "Local draft removed. You can undo this below.",
+          "Vietinis juodraštis pašalintas. Toliau gali atšaukti veiksmą.",
+        ),
+      );
+    } catch (error) {
+      setMessage(requestError(locale, error));
+    }
+  }
+  function undoRemoval() {
+    if (!deleted) return;
+    if (readDraft()) {
+      setDeleted(null);
+      return;
+    }
+    try {
+      saveDraft(deleted);
+      setDeleted(null);
+      setSource("local");
+      setMessage(copy(locale, "Draft restored.", "Juodraštis atkurtas."));
+    } catch (error) {
+      setMessage(requestError(locale, error));
+    }
   }
   return (
     <div className={styles.page}>
@@ -169,6 +240,7 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
           {user && (
             <button
               className={styles.secondaryButton}
+              disabled={loggingOut}
               onClick={() => void logout()}
             >
               <LogOut size={16} />
@@ -188,18 +260,24 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
             </button>
           </div>
         )}
+        {accountError && (
+          <div className={styles.inlineNotice} role="alert">
+            <span>{accountError}</span>
+            <button
+              className={styles.textButton}
+              disabled={accountLoading || loggingOut}
+              onClick={() => {
+                setAccountError("");
+                setAccountLoading(true);
+                void loadAccount();
+              }}
+            >
+              {copy(locale, "Retry account", "Bandyti įkelti paskyrą")}
+            </button>
+          </div>
+        )}
         {deleted && (
-          <button
-            className={styles.textButton}
-            onClick={() => {
-              saveDraft(deleted);
-              setDeleted(null);
-              setSource("local");
-              setMessage(
-                copy(locale, "Draft restored.", "Juodraštis atkurtas."),
-              );
-            }}
-          >
+          <button className={styles.textButton} onClick={undoRemoval}>
             <Undo2 size={16} />
             {copy(locale, "Undo removal", "Atšaukti pašalinimą")}
           </button>
@@ -213,13 +291,24 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
             <div className={styles.sourceTabs}>
               <button
                 aria-pressed={source === "local"}
+                disabled={loggingOut}
                 onClick={() => setSource("local")}
               >
                 {copy(locale, "On this device", "Šiame įrenginyje")}
               </button>
               <button
                 aria-pressed={source === "account"}
-                onClick={() => (user ? setSource("account") : setLogin(true))}
+                disabled={loggingOut}
+                onClick={() => {
+                  if (!user) {
+                    setLogin(true);
+                    return;
+                  }
+                  setSource("account");
+                  setAccountError("");
+                  setAccountLoading(true);
+                  void loadAccount();
+                }}
               >
                 {copy(locale, "My account", "Mano paskyra")}
                 {!user && <span>↗</span>}
@@ -233,11 +322,13 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
                       profile={profile}
                       locale={locale}
                       publicView={source === "account" && profile.published}
+                      saved={source}
                     />
                     <div className={styles.dashboardActions}>
                       <button
                         className={styles.primaryButton}
-                        onClick={() => setEditor(true)}
+                        disabled={accountLoading || loggingOut}
+                        onClick={() => setEditor(profile)}
                       >
                         <Pencil size={16} />
                         {copy(locale, "Edit my page", "Redaguoti puslapį")}
@@ -297,6 +388,22 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
                       )}
                     </div>
                   </>
+                ) : source === "account" && (accountLoading || accountError) ? (
+                  <div className={styles.emptyProfile}>
+                    <p>
+                      {accountLoading
+                        ? copy(
+                            locale,
+                            "Loading your account profile…",
+                            "Įkeliamas paskyros profilis…",
+                          )
+                        : copy(
+                            locale,
+                            "Your account profile is unavailable. Retry above or open the draft saved on this device.",
+                            "Paskyros profilis nepasiekiamas. Bandyk dar kartą arba atidaryk šiame įrenginyje išsaugotą juodraštį.",
+                          )}
+                    </p>
+                  </div>
                 ) : (
                   <div className={styles.emptyProfile}>
                     <UserMark />
@@ -393,25 +500,20 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
         )}
       </main>
       <CreatorFooter locale={locale} />
-      {login && (
-        <LoginDialog
-          locale={locale}
-          onClose={closeLogin}
-          onSuccess={(next) => {
-            setUser(next);
-            void loadRemote();
-          }}
-        />
-      )}{" "}
-      {editor && profile && (
+      {editor && (
         <ProfileEditor
-          initial={profile}
+          initial={editor}
           locale={locale}
           user={user}
           onClose={closeEditor}
           onLogin={() => setLogin(true)}
           onSaved={(updated, online) => {
-            setEditor(false);
+            accountRequest.current?.abort();
+            setAccountLoading(false);
+            setLoading(false);
+            setAccountError("");
+            setEditor(null);
+            setDeleted(null);
             if (online) {
               setRemote(updated);
               setSource("account");
@@ -430,6 +532,18 @@ export function CreatorDashboard({ locale }: { locale: Locale }) {
                   : "Juodraštis išsaugotas šiame įrenginyje.",
               ),
             );
+          }}
+        />
+      )}
+      {login && (
+        <LoginDialog
+          locale={locale}
+          onClose={closeLogin}
+          onSuccess={(next) => {
+            setUser(next);
+            setAccountError("");
+            setAccountLoading(true);
+            void loadAccount();
           }}
         />
       )}

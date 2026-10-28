@@ -1,14 +1,14 @@
 import "server-only";
 import { z } from "zod";
-import { DEFAULT_ESTIMATE_INPUT } from "../estimate";
+import { DEFAULT_ESTIMATE_INPUT, estimateInputSchema } from "../estimate";
 import type { CreatorProfile } from "../profiles";
 import { ApiError } from "./http";
 
 const userResponseSchema = z.object({
   data: z.object({
     id: z.string().regex(/^\d+$/),
-    username: z.string(),
-    name: z.string(),
+    username: z.string().regex(/^[A-Za-z0-9_]{1,15}$/),
+    name: z.string().min(1).max(200),
     description: z.string().optional(),
     location: z.string().optional(),
     profile_image_url: z.string().url().optional(),
@@ -23,6 +23,16 @@ const postsResponseSchema = z.object({
       z.object({
         id: z.string().regex(/^\d+$/),
         text: z.string(),
+        author_id: z.string().regex(/^\d+$/),
+        created_at: z.iso.datetime(),
+        referenced_tweets: z
+          .array(
+            z.object({
+              type: z.enum(["retweeted", "replied_to", "quoted"]),
+              id: z.string(),
+            }),
+          )
+          .optional(),
         public_metrics: z
           .object({
             impression_count: z.number().int().nonnegative().optional(),
@@ -30,9 +40,14 @@ const postsResponseSchema = z.object({
           .optional(),
       }),
     )
+    .max(100)
     .optional(),
 });
+const errorsSchema = z.object({
+  errors: z.array(z.object({ type: z.string().optional() })).min(1),
+});
 const cache = new Map<string, { profile: CreatorProfile; expires: number }>();
+const pending = new Map<string, Promise<CreatorProfile>>();
 
 async function fetchX(path: string) {
   let response: Response;
@@ -64,7 +79,15 @@ async function fetchX(path: string) {
       "x_unavailable",
       "Live X lookup is unavailable. Please enter your metrics manually.",
     );
-  return response.json();
+  try {
+    return await response.json();
+  } catch {
+    throw new ApiError(
+      502,
+      "x_data_unavailable",
+      "X did not return usable data.",
+    );
+  }
 }
 
 export async function lookupXProfile(handle: string): Promise<CreatorProfile> {
@@ -77,20 +100,30 @@ export async function lookupXProfile(handle: string): Promise<CreatorProfile> {
   const key = handle.toLowerCase();
   const cached = cache.get(key);
   if (cached && cached.expires > Date.now()) return cached.profile;
+  const existing = pending.get(key);
+  if (existing) return existing;
+  const lookup = loadXProfile(handle)
+    .then((profile) => {
+      if (cache.size >= 250) cache.delete(cache.keys().next().value!);
+      cache.set(key, { profile, expires: Date.now() + 15 * 60_000 });
+      return profile;
+    })
+    .finally(() => pending.delete(key));
+  pending.set(key, lookup);
+  return lookup;
+}
 
+async function loadXProfile(handle: string): Promise<CreatorProfile> {
   const rawUser = await fetchX(
     `users/by/username/${encodeURIComponent(handle)}?user.fields=public_metrics,profile_image_url,description,location`,
   );
   const parsedUser = userResponseSchema.safeParse(rawUser);
   if (!parsedUser.success) {
     if (
-      typeof rawUser === "object" &&
-      rawUser !== null &&
-      !rawUser.data &&
-      Array.isArray(rawUser.errors) &&
-      rawUser.errors.some((error: { type?: string }) =>
-        error.type?.endsWith("/resource-not-found"),
-      )
+      errorsSchema.safeParse(rawUser).success &&
+      errorsSchema
+        .parse(rawUser)
+        .errors.some((error) => error.type?.endsWith("/resource-not-found"))
     )
       throw new ApiError(
         404,
@@ -106,9 +139,11 @@ export async function lookupXProfile(handle: string): Promise<CreatorProfile> {
   const user = parsedUser.data.data;
   // One page: the most recent up to 100 original posts in the last 30 days.
   // The median and topPost describe only this sample, not the account's lifetime.
-  const start = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+  const now = Date.now();
+  const startTime = now - 30 * 24 * 60 * 60_000;
+  const start = new Date(startTime).toISOString();
   const rawPosts = await fetchX(
-    `users/${user.id}/tweets?max_results=100&exclude=retweets,replies&tweet.fields=public_metrics&start_time=${encodeURIComponent(start)}`,
+    `users/${user.id}/tweets?max_results=100&exclude=retweets,replies&tweet.fields=public_metrics,created_at,author_id,referenced_tweets&start_time=${encodeURIComponent(start)}`,
   );
   const parsedPosts = postsResponseSchema.safeParse(rawPosts);
   if (!parsedPosts.success)
@@ -117,7 +152,35 @@ export async function lookupXProfile(handle: string): Promise<CreatorProfile> {
       "x_data_unavailable",
       "X did not return usable post metrics.",
     );
-  const views = (parsedPosts.data.data || [])
+  if (
+    !parsedPosts.data.data?.length &&
+    errorsSchema.safeParse(rawPosts).success
+  )
+    throw new ApiError(
+      502,
+      "x_data_unavailable",
+      "X could not return this account's post metrics.",
+    );
+  const sample = [
+    ...new Map(
+      (parsedPosts.data.data || [])
+        .filter((post) => {
+          const created = Date.parse(post.created_at);
+          return (
+            post.author_id === user.id &&
+            created >= startTime &&
+            created <= now &&
+            !post.referenced_tweets?.some(
+              (reference) =>
+                reference.type === "retweeted" ||
+                reference.type === "replied_to",
+            )
+          );
+        })
+        .map((post) => [post.id, post]),
+    ).values(),
+  ];
+  const views = sample
     .flatMap((post) =>
       post.public_metrics?.impression_count === undefined
         ? []
@@ -135,16 +198,31 @@ export async function lookupXProfile(handle: string): Promise<CreatorProfile> {
     views.length % 2 ? views[middle] : (views[middle - 1] + views[middle]) / 2;
   const avatar =
     user.profile_image_url &&
-    new URL(user.profile_image_url).hostname === "pbs.twimg.com"
+    new URL(user.profile_image_url).hostname === "pbs.twimg.com" &&
+    new URL(user.profile_image_url).protocol === "https:" &&
+    !new URL(user.profile_image_url).username &&
+    !new URL(user.profile_image_url).password &&
+    !new URL(user.profile_image_url).port
       ? user.profile_image_url
       : undefined;
-  const topPost = parsedPosts.data.data
-    ?.filter((post) => post.public_metrics?.impression_count !== undefined)
+  const topPost = sample
+    .filter((post) => post.public_metrics?.impression_count !== undefined)
     .sort(
       (a, b) =>
         b.public_metrics!.impression_count! -
         a.public_metrics!.impression_count!,
     )[0];
+  const metrics = estimateInputSchema.safeParse({
+    ...DEFAULT_ESTIMATE_INPUT,
+    followers: user.public_metrics.followers_count,
+    medianViews,
+  });
+  if (!metrics.success)
+    throw new ApiError(
+      502,
+      "x_data_unavailable",
+      "X returned metrics outside this calculator's supported range.",
+    );
   const profile: CreatorProfile = {
     handle: user.username,
     name: user.name,
@@ -152,11 +230,7 @@ export async function lookupXProfile(handle: string): Promise<CreatorProfile> {
     location: user.location || "",
     color: "#1c2eff",
     avatar,
-    metrics: {
-      ...DEFAULT_ESTIMATE_INPUT,
-      followers: user.public_metrics.followers_count,
-      medianViews,
-    },
+    metrics: metrics.data,
     source: "x",
     updatedAt: new Date().toISOString(),
     sampleSize: views.length,
@@ -168,7 +242,5 @@ export async function lookupXProfile(handle: string): Promise<CreatorProfile> {
         }
       : undefined,
   };
-  if (cache.size >= 250) cache.delete(cache.keys().next().value!);
-  cache.set(key, { profile, expires: Date.now() + 15 * 60_000 });
   return profile;
 }

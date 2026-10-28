@@ -44,6 +44,7 @@ export async function GET(
         platform: profile.platform,
         published: true,
         handleVerified: false,
+        ...(profile.offers ? { offers: profile.offers } : {}),
       },
     });
   });

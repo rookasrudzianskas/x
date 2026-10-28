@@ -1,230 +1,426 @@
-/* Satori renders these image elements to PNG; they are not browser <img> elements. */
+/* Satori renders these image elements to PNG, outside the browser. */
 /* eslint-disable @next/next/no-img-element */
 import { ImageResponse } from "next/og";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { sampleReport, type Report } from "@/lib/profiles";
-import { normalizeHandle } from "@/lib/estimate";
+import { calculateEstimate } from "@/lib/estimate";
 import { findReport } from "@/lib/server/reports";
+import { lookupXProfile } from "@/lib/server/x";
 import { api, ApiError } from "@/lib/server/http";
 import { throttle } from "@/lib/server/rate-limit";
-import { localizeProfileName } from "@/lib/i18n";
+import { getDictionary, localizeProfileName, money } from "@/lib/i18n";
+import {
+  parseCardQuery,
+  shortenCardText,
+  supportedCardName,
+} from "@/lib/share-card";
+import type { Locale } from "@/lib/locale";
+import { pageCopy } from "@/lib/page-metadata";
 
 export const runtime = "nodejs";
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-let assets: Promise<[Buffer, Buffer, Buffer]> | undefined;
+let assets: Promise<[Buffer, Buffer, Buffer, Buffer, Buffer]> | undefined;
 function getAssets() {
-  return (assets ??= Promise.all([
-    readFile(path.join(process.cwd(), "public/reference/new-pixel-static.ttf")),
-    readFile(path.join(process.cwd(), "public/vilnius-skyline.svg")),
-    readFile(path.join(process.cwd(), "public/card-illustration.png")),
-  ]));
+  if (!assets) {
+    assets = Promise.all([
+      readFile(
+        path.join(process.cwd(), "public/reference/new-pixel-static.ttf"),
+      ),
+      readFile(path.join(process.cwd(), "public/vilnius-skyline.svg")),
+      readFile(path.join(process.cwd(), "public/card-illustration.png")),
+      readFile(
+        path.join(process.cwd(), "public/reference/inter-latin-static.ttf"),
+      ),
+      readFile(
+        path.join(process.cwd(), "public/reference/inter-latin-ext-static.ttf"),
+      ),
+    ]).catch((error) => {
+      assets = undefined;
+      throw error;
+    });
+  }
+  return assets;
+}
+
+async function resolveReport(
+  handle?: string,
+  id?: string,
+): Promise<Report | null> {
+  if (!handle) return null;
+  if (id) {
+    const report = await findReport(id);
+    if (
+      !report ||
+      report.profile.handle.toLowerCase() !== handle.toLowerCase()
+    ) {
+      throw new ApiError(404, "not_found", "Report not found.");
+    }
+    return report;
+  }
+  const sample = sampleReport(handle);
+  if (sample) return sample;
+  const profile = await lookupXProfile(handle);
+  return {
+    id: `x-${profile.handle}`,
+    profile,
+    estimate: calculateEstimate(profile.metrics),
+  };
+}
+
+function ReportValues({
+  report,
+  locale,
+  compact = false,
+}: {
+  report: Report;
+  locale: Locale;
+  compact?: boolean;
+}) {
+  const t = getDictionary(locale);
+  const worth = money(
+    report.estimate.worth,
+    locale,
+    report.estimate.worth >= 100_000,
+  );
+  const monthly = money(
+    report.estimate.monthly,
+    locale,
+    report.estimate.monthly >= 10_000,
+  );
+  const name = shortenCardText(
+    supportedCardName(
+      localizeProfileName(report.profile.name, report.profile.source, locale),
+      report.profile.handle,
+    ),
+    compact ? 28 : 40,
+  );
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: compact ? 508 : 1050,
+      }}
+    >
+      <div
+        style={{
+          fontSize: compact
+            ? Math.min(30, 490 / [...name].length)
+            : Math.min(36, 1000 / [...name].length),
+          whiteSpace: "nowrap",
+        }}
+      >
+        {name}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          fontSize: 21,
+          color: "#c9d1ff",
+          marginTop: 5,
+        }}
+      >{`@${report.profile.handle} · ${t[report.profile.source]}`}</div>
+      <div
+        style={{
+          fontSize: compact ? 20 : 23,
+          marginTop: 38,
+          maxWidth: compact ? 480 : 900,
+        }}
+      >
+        {t.reportWorth}
+      </div>
+      <div
+        style={{
+          fontFamily: "Pixel",
+          fontSize: compact
+            ? Math.min(84, 590 / worth.length)
+            : Math.min(116, 1500 / worth.length),
+          lineHeight: 1.1,
+          marginTop: 8,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {worth}
+      </div>
+      {compact && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: 12,
+            marginTop: 24,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "Pixel",
+              fontSize: Math.min(48, 570 / monthly.length),
+              whiteSpace: "nowrap",
+            }}
+          >
+            {monthly}
+          </span>
+          <span style={{ fontSize: 20 }}>{t.perMonth}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export async function GET(request: Request) {
   return api(async () => {
     await throttle(request, "card", 60);
-    const url = new URL(request.url);
-    const locale = url.searchParams.get("lang") === "lt" ? "lt" : "en";
-    const handle = normalizeHandle(url.searchParams.get("handle") || "");
-    const reportId = url.searchParams.get("report");
-    let report: Report | null = handle ? sampleReport(handle) : null;
-    if (reportId) {
-      if (!uuid.test(reportId))
-        throw new ApiError(400, "invalid_report", "Invalid report.");
-      report = await findReport(reportId);
-      if (
-        !report ||
-        (handle && handle.toLowerCase() !== report.profile.handle.toLowerCase())
-      )
-        throw new ApiError(404, "not_found", "Report not found.");
-    }
-    const [font, skyline, figure] = await getAssets();
-    const money = (value: number) =>
-      new Intl.NumberFormat(locale === "lt" ? "lt-LT" : "en-IE", {
-        style: "currency",
-        currency: "EUR",
-        maximumFractionDigits: 0,
-      }).format(value);
-    const title = report
-      ? localizeProfileName(report.profile.name, report.profile.source, locale)
-      : locale === "lt"
-        ? "Tavo balsas Vilniuje."
-        : "Your voice in Vilnius.";
-    return new ImageResponse(
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          background: "#0033ff",
-          color: "#fff",
-          padding: "42px 62px",
-          border: "14px solid white",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
+    const query = parseCardQuery(new URL(request.url).searchParams);
+    const {
+      lang: locale,
+      handle,
+      compare,
+      report: reportId,
+      otherReport,
+    } = query;
+    const [report, opponent] = await Promise.all([
+      resolveReport(handle, reportId),
+      resolveReport(compare, otherReport),
+    ]);
+    const [font, skyline, figure, inter, interExt] = await getAssets();
+    const isComparison = Boolean(report && opponent);
+    const height = query.format === "download" ? 750 : 630;
+    const t = getDictionary(locale);
+    const [pageTitle, pageDescription] = pageCopy(query.page, locale);
+    const monthly = report
+      ? money(
+          report.estimate.monthly,
+          locale,
+          report.estimate.monthly >= 10_000,
+        )
+      : "";
+    const filename = `vilnius-worth${handle ? `-${handle}` : ""}${compare ? `-vs-${compare}` : ""}.png`;
+    const response = new ImageResponse(
+      (
         <div
           style={{
+            width: "100%",
+            height: "100%",
             display: "flex",
-            position: "absolute",
-            top: 40,
-            left: 62,
-            right: 62,
-            justifyContent: "space-between",
-            alignItems: "center",
+            fontFamily: "Inter, InterExt",
+            background: "#0033ff",
+            color: "white",
+            border: "14px solid white",
+            position: "relative",
+            overflow: "hidden",
           }}
         >
-          <span style={{ fontSize: 28 }}>{title}</span>
-          <span style={{ fontFamily: "Pixel", fontSize: 40 }}>
+          <div
+            style={{
+              position: "absolute",
+              display: "flex",
+              left: 48,
+              top: 35,
+              fontSize: 27,
+            }}
+          >
+            {isComparison
+              ? locale === "lt"
+                ? "Greta vienas kito."
+                : "Side by side."
+              : t.local}
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              display: "flex",
+              left: 905,
+              top: 28,
+              width: 240,
+              fontFamily: "Pixel",
+              fontSize: 40,
+            }}
+          >
             unfair · Vilnius
-          </span>
-        </div>
-        {report ? (
-          <>
-            <div
-              style={{
-                display: "flex",
-                position: "absolute",
-                top: 90,
-                left: 62,
-                fontSize: 21,
-                color: "#b5c3ff",
-              }}
-            >
-              @{report.profile.handle}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                position: "absolute",
-                top: 160,
-                left: 62,
-                fontSize: 22,
-                maxWidth: 700,
-              }}
-            >
-              {locale === "lt"
-                ? "Pavyzdinė penkerių metų reklaminė vertė"
-                : "Illustrative five-year sponsorship value"}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                position: "absolute",
-                top: 200,
-                left: 62,
-                fontFamily: "Pixel",
-                fontSize: 110,
-              }}
-            >
-              {money(report.estimate.worth)}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                position: "absolute",
-                right: 62,
-                top: 300,
-                alignItems: "flex-end",
-              }}
-            >
-              <span style={{ fontFamily: "Pixel", fontSize: 74 }}>
-                {money(report.estimate.monthly)}
-              </span>
-              <span style={{ fontSize: 22 }}>
-                {locale === "lt" ? "per mėnesį" : "per month"}
-              </span>
-            </div>
+          </div>
+          <img
+            src={`data:image/svg+xml;base64,${skyline.toString("base64")}`}
+            alt=""
+            width={1172}
+            height={163}
+            style={{
+              position: "absolute",
+              left: 0,
+              top: height - 191,
+              width: 1172,
+              height: 163,
+            }}
+          />
+          {report && !opponent && (
             <img
               src={`data:image/png;base64,${figure.toString("base64")}`}
+              alt=""
               width={340}
               height={255}
-              alt=""
               style={{
                 position: "absolute",
-                left: 430,
-                top: 307,
+                left: 420,
+                top: height - 290,
                 width: 340,
                 height: 255,
               }}
             />
-          </>
-        ) : (
-          <>
-            <div
-              style={{
-                display: "flex",
-                position: "absolute",
-                top: 155,
-                left: 62,
-                fontFamily: "Pixel",
-                fontSize: 86,
-                lineHeight: 1,
-                maxWidth: 1000,
-              }}
-            >
+          )}
+          {report ? (
+            isComparison && opponent ? (
+              <>
+                <div
+                  style={{
+                    position: "absolute",
+                    display: "flex",
+                    left: 48,
+                    top: 120,
+                  }}
+                >
+                  <ReportValues report={report} locale={locale} compact />
+                </div>
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 586,
+                    top: 115,
+                    height: height - 270,
+                    width: 2,
+                    background: "rgba(255,255,255,.35)",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    display: "flex",
+                    left: 620,
+                    top: 120,
+                  }}
+                >
+                  <ReportValues report={opponent} locale={locale} compact />
+                </div>
+              </>
+            ) : (
+              <>
+                <div
+                  style={{
+                    position: "absolute",
+                    display: "flex",
+                    left: 48,
+                    top: 110,
+                  }}
+                >
+                  <ReportValues report={report} locale={locale} />
+                </div>
+                <div
+                  style={{
+                    position: "absolute",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    left: 820,
+                    width: 300,
+                    top: height - 300,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: "Pixel",
+                      fontSize: Math.min(76, 850 / monthly.length),
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {monthly}
+                  </span>
+                  <span style={{ fontSize: 24 }}>{t.perMonth}</span>
+                </div>
+              </>
+            )
+          ) : (
+            <>
+              <div
+                style={{
+                  position: "absolute",
+                  display: "flex",
+                  top: 155,
+                  left: 48,
+                  fontFamily: "Pixel",
+                  fontSize: 86,
+                  lineHeight: 1,
+                  maxWidth: 1050,
+                }}
+              >
+                {query.page === "worth"
+                  ? locale === "lt"
+                    ? "Kiek €€€ galėtum uždirbti su savo X paskyra?"
+                    : "How much €€€ could you earn with your X account?"
+                  : pageTitle}
+              </div>
+              <div
+                style={{
+                  position: "absolute",
+                  display: "flex",
+                  top: 365,
+                  left: 48,
+                  fontSize: 25,
+                  lineHeight: 1.2,
+                  maxWidth: 1030,
+                  color: "#c9d1ff",
+                }}
+              >
+                {query.page === "worth"
+                  ? locale === "lt"
+                    ? "Skaidrios prielaidos. Pasaulinė auditorija."
+                    : "Transparent assumptions. An audience without borders."
+                  : pageDescription}
+              </div>
+            </>
+          )}
+          <div
+            style={{
+              position: "absolute",
+              display: "flex",
+              left: 48,
+              right: 48,
+              top: height - 62,
+              justifyContent: "space-between",
+              fontSize: 18,
+              background: "rgba(0,24,155,.82)",
+              padding: "8px 12px",
+            }}
+          >
+            <span>{t.local} · EUR</span>
+            <span>
               {locale === "lt"
-                ? "Kiek €€€ galėtum uždirbti su savo X paskyra?"
-                : "How much €€€ could you earn with your X account?"}
-            </div>
-            <div
-              style={{
-                display: "flex",
-                position: "absolute",
-                top: 365,
-                left: 62,
-                fontSize: 24,
-                color: "#c9d1ff",
-              }}
-            >
-              {locale === "lt"
-                ? "Skaidrios prielaidos. Pasaulinė auditorija."
-                : "Transparent assumptions. An audience without borders."}
-            </div>
-          </>
-        )}
-        <img
-          src={`data:image/svg+xml;base64,${skyline.toString("base64")}`}
-          width={1172}
-          height={163}
-          alt=""
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 439,
-            width: 1172,
-            height: 163,
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            position: "absolute",
-            left: 50,
-            right: 50,
-            bottom: 20,
-            justifyContent: "space-between",
-            fontSize: 17,
-          }}
-        >
-          <span>VILNIUS, LITHUANIA · EUR</span>
-          <span>
-            {locale === "lt"
-              ? "Pavyzdinis skaičiavimas, ne garantuotos pajamos"
-              : "Illustrative estimate, not guaranteed income"}
-          </span>
+                ? "Pavyzdinis skaičiavimas, ne garantuotos pajamos"
+                : "Illustrative estimate, not guaranteed income"}
+            </span>
+          </div>
         </div>
-      </div>,
+      ),
       {
         width: 1200,
-        height: 630,
-        fonts: [{ name: "Pixel", data: font, weight: 400, style: "normal" }],
-        headers: { "Cache-Control": "public, max-age=3600" },
+        height,
+        fonts: [
+          { name: "Pixel", data: font, weight: 400, style: "normal" },
+          { name: "Inter", data: inter, weight: 400, style: "normal" },
+          { name: "InterExt", data: interExt, weight: 400, style: "normal" },
+        ],
+        headers: {
+          "Cache-Control":
+            reportId || otherReport
+              ? "private, no-store"
+              : "public, max-age=900",
+          ...(query.format === "download"
+            ? { "Content-Disposition": `attachment; filename="${filename}"` }
+            : {}),
+        },
       },
     );
+    // Keep rendering inside the error boundary: failures should not produce corrupt PNG downloads.
+    return new Response(await response.arrayBuffer(), {
+      status: response.status,
+      headers: response.headers,
+    });
   });
 }

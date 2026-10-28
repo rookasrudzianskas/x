@@ -2,32 +2,41 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import WorthApp from "@/components/worth/WorthApp";
 import { asLocale } from "@/lib/locale";
-import { normalizeHandle } from "@/lib/estimate";
+import { normalizeHandleSegment } from "@/lib/handle-route";
+import { pageMetadata } from "@/lib/page-metadata";
+import { firstQueryValue } from "@/lib/report-query";
 type Props = {
   params: Promise<{ locale: string; handle: string }>;
-  searchParams: Promise<{ report?: string }>;
+  searchParams: Promise<{ report?: string | string[] }>;
 };
 export async function generateMetadata({
   params,
   searchParams,
 }: Props): Promise<Metadata> {
-  const { locale, handle } = await params;
-  const valid = normalizeHandle(handle);
-  const report = (await searchParams).report;
+  const { locale: language, handle } = await params;
+  const locale = asLocale(language);
+  const valid = normalizeHandleSegment(handle);
+  const report = firstQueryValue(await searchParams, "report");
   const query = new URLSearchParams({ lang: locale, handle: valid || "" });
-  if (report && /^[0-9a-f-]{36}$/i.test(report)) query.set("report", report);
+  if (report !== undefined) query.set("report", report);
   const image = `/api/card?${query}`;
-  return {
-    title: valid
+  const canonicalQuery = new URLSearchParams();
+  if (query.has("report")) canonicalQuery.set("report", query.get("report")!);
+  return pageMetadata(
+    locale,
+    `worth/${valid || handle}`,
+    valid
       ? `@${valid} · ${locale === "lt" ? "Reklaminė vertė" : "Sponsorship value"}`
       : "Profile",
-    robots: { index: false, follow: true },
-    openGraph: { images: [{ url: image, width: 1200, height: 630 }] },
-    twitter: { card: "summary_large_image", images: [image] },
-  };
+    locale === "lt"
+      ? "Pavyzdinis reklaminio bendradarbiavimo skaičiavimas eurais. Peržiūrėk ir keisk prielaidas."
+      : "An illustrative sponsorship estimate in euros. Review and adjust the assumptions.",
+    { image, query: canonicalQuery, noIndex: true },
+  );
 }
 export default async function Page({ params }: Props) {
   const { locale, handle } = await params;
-  if (!normalizeHandle(handle)) notFound();
-  return <WorthApp locale={asLocale(locale)} handle={handle} />;
+  const normalized = normalizeHandleSegment(handle);
+  if (!normalized) notFound();
+  return <WorthApp locale={asLocale(locale)} handle={normalized} />;
 }

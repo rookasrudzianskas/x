@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { NextResponse } from "next/server";
 import { getDatabase } from "./db";
 import { ApiError } from "./http";
-import { authSecret } from "./otp";
+import { authSecret, equalHashes, hashOtp, OTP_MAX_ATTEMPTS } from "./otp";
 
 export const SESSION_COOKIE = "worth_session";
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -35,35 +35,82 @@ function cookieOptions(request: Request) {
   };
 }
 
-export async function createSession(
+/** Redeem the code and persist the session in one transaction, or do neither. */
+export async function verifyAndCreateSession(
   email: string,
+  code: string,
   request: Request,
   response: NextResponse,
-) {
+  now = Date.now(),
+): Promise<User | null> {
   authSecret();
   const db = await getDatabase();
-  await db.execute({
-    sql: "INSERT INTO users(id,email,created_at) VALUES(?,?,?) ON CONFLICT(email) DO NOTHING",
-    args: [randomUUID(), email, Date.now()],
-  });
-  const result = await db.execute({
-    sql: "SELECT id,email FROM users WHERE email=?",
-    args: [email],
-  });
-  const user = {
-    id: String(result.rows[0].id),
-    email: String(result.rows[0].email),
-  };
+  const challenge = (
+    await db.execute({
+      sql: "SELECT salt,code_hash,expires_at,attempts,used_at FROM otp_codes WHERE email=?",
+      args: [email],
+    })
+  ).rows[0];
+  if (
+    !challenge ||
+    challenge.used_at !== null ||
+    Number(challenge.expires_at) <= now ||
+    Number(challenge.attempts) >= OTP_MAX_ATTEMPTS
+  )
+    return null;
+  const salt = String(challenge.salt);
+  const valid =
+    /^\d{6}$/.test(code) &&
+    equalHashes(hashOtp(email, code, salt), String(challenge.code_hash));
+  if (!valid) {
+    await db.execute({
+      sql: "UPDATE otp_codes SET attempts=attempts+1 WHERE email=? AND salt=? AND used_at IS NULL AND expires_at>? AND attempts<?",
+      args: [email, salt, now, OTP_MAX_ATTEMPTS],
+    });
+    return null;
+  }
+
   const token = randomBytes(32).toString("base64url");
-  await db.execute({
-    sql: "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
-    args: [tokenHash(token), user.id, Date.now() + SESSION_TTL_SECONDS * 1_000],
-  });
+  const tokenDigest = tokenHash(token);
+  const eligible =
+    "email=? AND salt=? AND code_hash=? AND used_at IS NULL AND expires_at>? AND attempts<?";
+  const eligibilityArgs = [
+    email,
+    salt,
+    String(challenge.code_hash),
+    now,
+    OTP_MAX_ATTEMPTS,
+  ];
+  const results = await db.batch(
+    [
+      {
+        sql: `INSERT INTO users(id,email,created_at) SELECT ?,email,? FROM otp_codes WHERE ${eligible} ON CONFLICT(email) DO NOTHING`,
+        args: [randomUUID(), now, ...eligibilityArgs],
+      },
+      {
+        sql: `UPDATE otp_codes SET attempts=attempts+1, used_at=? WHERE ${eligible}`,
+        args: [now, ...eligibilityArgs],
+      },
+      {
+        // Keep this immediately after the conditional UPDATE. SQLite changes()
+        // belongs to this batch's connection and gates the single winning request.
+        sql: "INSERT INTO sessions(token_hash,user_id,expires_at) SELECT ?,id,? FROM users WHERE email=? AND changes()=1",
+        args: [tokenDigest, now + SESSION_TTL_SECONDS * 1_000, email],
+      },
+      {
+        sql: "SELECT users.id,users.email FROM users JOIN sessions ON users.id=sessions.user_id WHERE sessions.token_hash=?",
+        args: [tokenDigest],
+      },
+    ],
+    "write",
+  );
+  const row = results[3].rows[0];
+  if (!row) return null;
   response.cookies.set(SESSION_COOKIE, token, {
     ...cookieOptions(request),
     maxAge: SESSION_TTL_SECONDS,
   });
-  return user;
+  return { id: String(row.id), email: String(row.email) };
 }
 
 export async function getUser(request: Request): Promise<User | null> {

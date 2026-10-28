@@ -35,6 +35,15 @@ import {
   type CreatorProfile,
   type Report,
 } from "@/lib/profiles";
+import { firstQueryValue, isValidReportId } from "@/lib/report-query";
+import {
+  comparisonImageUrl,
+  lookupFailureKey,
+  parseBoardPayload,
+  parseReportPayload,
+  updateReportQuery,
+  type LookupError,
+} from "./report-utils";
 import {
   getDictionary,
   localizeProfileName,
@@ -188,13 +197,14 @@ function Avatar({
   profile: Pick<CreatorProfile, "name" | "color" | "avatar">;
   size?: "normal" | "large";
 }) {
+  const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   return (
     <span
       className={`avatar avatar-${size}`}
       style={{ "--avatar-color": profile.color } as CSSProperties}
       aria-hidden="true"
     >
-      {profile.avatar ? (
+      {profile.avatar && failedAvatar !== profile.avatar ? (
         <Image
           src={profile.avatar}
           alt=""
@@ -202,9 +212,10 @@ function Avatar({
           height={46}
           unoptimized
           referrerPolicy="no-referrer"
+          onError={() => setFailedAvatar(profile.avatar || null)}
         />
       ) : (
-        <span>{profile.name.slice(0, 1)}</span>
+        <span>{[...profile.name][0]}</span>
       )}
     </span>
   );
@@ -248,6 +259,7 @@ function HandleForm({
   const router = useRouter();
   const [value, setValue] = useState(initial);
   const [error, setError] = useState("");
+  const errorId = comparisonWith ? "compare-handle-error" : "x-handle-error";
   function submit(event: FormEvent) {
     event.preventDefault();
     const normalized = normalizeHandle(value);
@@ -292,14 +304,14 @@ function HandleForm({
           autoComplete="off"
           spellCheck={false}
           aria-invalid={!!error}
-          aria-describedby={error ? "handle-error" : undefined}
+          aria-describedby={error ? errorId : undefined}
         />
         <button type="submit" className="button button-blue">
           {comparisonWith ? t.compare : t.calculate}
         </button>
       </div>
       <p
-        id="handle-error"
+        id={errorId}
         className="handle-error"
         role={error ? "alert" : undefined}
       >
@@ -375,8 +387,19 @@ function Leaderboard({ locale }: { locale: Locale }) {
   const [total, setTotal] = useState(SAMPLE_PROFILES.length);
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [unavailable, setUnavailable] = useState(false);
+  const [unavailable, setUnavailable] = useState<"" | "all" | "page">("");
+  const [revision, setRevision] = useState(0);
   const generation = useRef(0);
+  useEffect(() => {
+    const refresh = () => {
+      generation.current += 1;
+      setExpanded(false);
+      setBusy(true);
+      setRevision((value) => value + 1);
+    };
+    window.addEventListener("worth:directory-updated", refresh);
+    return () => window.removeEventListener("worth:directory-updated", refresh);
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     const requestGeneration = generation.current;
@@ -385,7 +408,7 @@ function Leaderboard({ locale }: { locale: Locale }) {
     })
       .then(async (response) => {
         if (!response.ok) throw new Error("board");
-        return response.json();
+        return response.json().then(parseBoardPayload);
       })
       .then((data: { profiles: CreatorProfile[]; total: number }) => {
         if (
@@ -395,7 +418,7 @@ function Leaderboard({ locale }: { locale: Locale }) {
           return;
         setProfiles(data.profiles);
         setTotal(data.total);
-        setUnavailable(false);
+        setUnavailable("");
       })
       .catch((error) => {
         if (
@@ -412,7 +435,7 @@ function Leaderboard({ locale }: { locale: Locale }) {
             );
           setProfiles(samples.slice(0, 8));
           setTotal(samples.length);
-          setUnavailable(true);
+          setUnavailable("all");
         }
       })
       .finally(() => {
@@ -423,7 +446,7 @@ function Leaderboard({ locale }: { locale: Locale }) {
           setBusy(false);
       });
     return () => controller.abort();
-  }, [sort]);
+  }, [sort, revision]);
   function changeSort(value: "recent" | "top") {
     if (value !== sort) {
       generation.current += 1;
@@ -442,8 +465,7 @@ function Leaderboard({ locale }: { locale: Locale }) {
         `/api/board?sort=${sort}&offset=${profiles.length}&limit=30`,
       );
       if (!response.ok) throw new Error("board");
-      const data: { profiles: CreatorProfile[]; total: number } =
-        await response.json();
+      const data = parseBoardPayload(await response.json());
       if (requestGeneration !== generation.current) return;
       setProfiles((existing) => [
         ...existing,
@@ -454,16 +476,7 @@ function Leaderboard({ locale }: { locale: Locale }) {
       setTotal(data.total);
     } catch {
       if (requestGeneration !== generation.current) return;
-      const samples = [...SAMPLE_PROFILES];
-      if (sort === "top")
-        samples.sort(
-          (a, b) =>
-            calculateEstimate(b.metrics).worth -
-            calculateEstimate(a.metrics).worth,
-        );
-      setProfiles(samples);
-      setTotal(samples.length);
-      setUnavailable(true);
+      setUnavailable("page");
     } finally {
       if (requestGeneration === generation.current) setBusy(false);
     }
@@ -475,10 +488,32 @@ function Leaderboard({ locale }: { locale: Locale }) {
     >
       <div className="section-heading">
         <h2 id="leaderboard-title">{t.leaderboard}</h2>
-        <div className="board-tabs" role="tablist" aria-label={t.leaderboard}>
+        <div
+          className="board-tabs"
+          role="tablist"
+          aria-label={t.leaderboard}
+          onKeyDown={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+              return;
+            event.preventDefault();
+            const next =
+              event.key === "Home"
+                ? "recent"
+                : event.key === "End"
+                  ? "top"
+                  : sort === "recent"
+                    ? "top"
+                    : "recent";
+            changeSort(next);
+            document.getElementById(`board-tab-${next}`)?.focus();
+          }}
+        >
           <button
             role="tab"
             type="button"
+            id="board-tab-recent"
+            aria-controls="board-panel"
+            tabIndex={sort === "recent" ? 0 : -1}
             aria-selected={sort === "recent"}
             onClick={() => changeSort("recent")}
           >
@@ -488,6 +523,9 @@ function Leaderboard({ locale }: { locale: Locale }) {
           <button
             role="tab"
             type="button"
+            id="board-tab-top"
+            aria-controls="board-panel"
+            tabIndex={sort === "top" ? 0 : -1}
             aria-selected={sort === "top"}
             onClick={() => changeSort("top")}
           >
@@ -498,9 +536,17 @@ function Leaderboard({ locale }: { locale: Locale }) {
       </div>
       <div
         className={`board-wrap ${expanded ? "expanded" : "collapsed"}`}
+        id="board-panel"
+        role="tabpanel"
+        aria-labelledby={`board-tab-${sort}`}
         aria-busy={busy}
       >
-        <div className="board-scroll">
+        <div
+          className="board-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label={t.leaderboard}
+        >
           <table className="board-table">
             <thead>
               <tr>
@@ -573,7 +619,11 @@ function Leaderboard({ locale }: { locale: Locale }) {
         )}
       </div>
       <p className="section-note">
-        {unavailable ? t.boardUnavailable : t.sampleNote}
+        {unavailable === "all"
+          ? t.boardUnavailable
+          : unavailable === "page"
+            ? t.boardPageUnavailable
+            : t.sampleNote}
       </p>
     </section>
   );
@@ -632,34 +682,30 @@ function LocalSections({ locale }: { locale: Locale }) {
   );
 }
 
-type LookupError =
-  | "notConfigured"
-  | "notFound"
-  | "rateLimited"
-  | "lookupFailed"
-  | "reportMissing";
-
 function useReport(handle: string, primary = true) {
   const searchParams = useSearchParams();
-  const id = searchParams.get(primary ? "report" : "otherReport");
-  const requestKey = `${handle}:${id || ""}`;
-  const example = id ? null : sampleReport(handle);
+  const id = firstQueryValue(searchParams, primary ? "report" : "otherReport");
+  const hasReportId = id !== undefined;
+  const invalidReportId = hasReportId && !isValidReportId(id);
+  const requestKey = JSON.stringify([handle, id ?? null]);
+  const example = hasReportId ? null : sampleReport(handle);
   const [result, setResult] = useState<{
     key: string;
     report: Report | null;
     error: LookupError | null;
   } | null>(null);
-  const current =
-    result?.key === requestKey
+  const current = invalidReportId
+    ? { report: null, error: "reportMissing" as const }
+    : result?.key === requestKey
       ? result
       : example
         ? { report: example, error: null }
         : null;
 
   useEffect(() => {
+    if (invalidReportId || (!hasReportId && sampleReport(handle))) return;
     const controller = new AbortController();
-    if (!id && sampleReport(handle)) return;
-    const url = id
+    const url = hasReportId
       ? `/api/reports/${encodeURIComponent(id)}`
       : `/api/worth/${encodeURIComponent(handle)}`;
     fetch(url, { signal: controller.signal })
@@ -668,26 +714,15 @@ function useReport(handle: string, primary = true) {
         if (controller.signal.aborted) return;
         if (!response.ok) {
           const code = String(data.code || data.error?.code || "");
-          const error: LookupError = id
-            ? "reportMissing"
-            : code.includes("not_configured") || response.status === 503
-              ? "notConfigured"
-              : response.status === 404
-                ? "notFound"
-                : response.status === 429
-                  ? "rateLimited"
-                  : "lookupFailed";
+          const error = lookupFailureKey(response.status, code, hasReportId);
           setResult({ key: requestKey, report: null, error });
           return;
         }
-        const report: Report = id
-          ? data.report
-          : {
-              id: `${data.profile.source}-${data.profile.handle}`,
-              profile: data.profile,
-              estimate: data.estimate,
-            };
-        if (report.profile.handle.toLowerCase() !== handle.toLowerCase()) {
+        const report = parseReportPayload(hasReportId ? data.report : data);
+        if (
+          (hasReportId && report.id !== id) ||
+          report.profile.handle.toLowerCase() !== handle.toLowerCase()
+        ) {
           setResult({ key: requestKey, report: null, error: "reportMissing" });
           return;
         }
@@ -698,11 +733,15 @@ function useReport(handle: string, primary = true) {
           setResult({ key: requestKey, report: null, error: "lookupFailed" });
       });
     return () => controller.abort();
-  }, [handle, id, requestKey]);
+  }, [handle, id, hasReportId, invalidReportId, requestKey]);
 
   function setReport(report: Report) {
     // Saving also updates this slot's query parameter in the same event.
-    setResult({ key: `${handle}:${report.id}`, report, error: null });
+    setResult({
+      key: JSON.stringify([handle, report.id]),
+      report,
+      error: null,
+    });
   }
   return {
     report: current?.report || null,
@@ -730,7 +769,11 @@ function MetricsForm({
   const [displayName, setDisplayName] = useState(name);
   const [publish, setPublish] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<
+    "" | "formError" | "saveError" | "saveRateLimit"
+  >("");
+  const activeSave = useRef<AbortController | null>(null);
+  useEffect(() => () => activeSave.current?.abort(), []);
   const prefix = `metrics-${handle}`;
   const fields = [
     { key: "followers", label: t.followers, max: 1_000_000_000, step: 1 },
@@ -745,16 +788,20 @@ function MetricsForm({
   ] as const;
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (activeSave.current) return;
     const parsed = estimateInputSchema.safeParse(input);
     if (!parsed.success) {
-      setError(t.formError);
+      setError("formError");
       return;
     }
+    const controller = new AbortController();
+    activeSave.current = controller;
     setBusy(true);
     setError("");
     try {
       const response = await fetch("/api/reports", {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           handle,
@@ -763,83 +810,94 @@ function MetricsForm({
           publish,
         }),
       });
+      if (controller.signal.aborted) return;
+      if (response.status === 429) {
+        setError("saveRateLimit");
+        return;
+      }
       if (!response.ok) throw new Error("save");
-      const data: { report: Report } = await response.json();
-      onSaved(data.report);
+      const data = await response.json();
+      const report = parseReportPayload(data.report);
+      if (controller.signal.aborted) return;
+      onSaved(report);
+      if (publish) window.dispatchEvent(new Event("worth:directory-updated"));
     } catch {
-      setError(t.saveError);
+      if (!controller.signal.aborted) setError("saveError");
     } finally {
-      setBusy(false);
+      activeSave.current = null;
+      if (!controller.signal.aborted) setBusy(false);
     }
   }
   return (
     <form className="metrics-form" onSubmit={submit} aria-busy={busy}>
-      {!initial && <p className="form-intro">{t.exampleDefaults}</p>}
-      <div className="metrics-grid">
-        <label className="full-width" htmlFor={`${prefix}-name`}>
-          {t.name}
-          <input
-            id={`${prefix}-name`}
-            value={displayName}
-            maxLength={70}
-            onChange={(event) => setDisplayName(event.target.value)}
-            placeholder={`@${handle}`}
-          />
-        </label>
-        {fields.map((field) => (
-          <label key={field.key} htmlFor={`${prefix}-${field.key}`}>
-            {field.label}
+      <fieldset disabled={busy}>
+        {!initial && <p className="form-intro">{t.exampleDefaults}</p>}
+        <div className="metrics-grid">
+          <label className="full-width" htmlFor={`${prefix}-name`}>
+            {t.name}
             <input
-              id={`${prefix}-${field.key}`}
-              name={field.key}
-              type="number"
-              inputMode="decimal"
-              min={0}
-              max={field.max}
-              step={field.step}
-              required
-              value={Number.isNaN(input[field.key]) ? "" : input[field.key]}
-              onChange={(event) =>
-                setInput({
-                  ...input,
-                  [field.key]:
-                    event.target.value === ""
-                      ? NaN
-                      : Number(event.target.value),
-                })
-              }
+              id={`${prefix}-name`}
+              value={displayName}
+              maxLength={80}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder={`@${handle}`}
             />
           </label>
-        ))}
-      </div>
-      <p className="form-help">{t.cpmHelp}</p>
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={publish}
-          onChange={(event) => setPublish(event.target.checked)}
-        />
-        <span>{t.publish}</span>
-      </label>
-      <p className="form-help">{t.publishHelp}</p>
-      {error && (
-        <p role="alert" className="form-error">
-          {error}
-        </p>
-      )}
-      <button type="submit" className="button button-blue" disabled={busy}>
-        {busy ? (
-          <>
-            <LoaderCircle size={17} className="spin" />
-            {t.saving}
-          </>
-        ) : (
-          <>
-            {t.recalculate}
-            <ArrowRight size={16} />
-          </>
+          {fields.map((field) => (
+            <label key={field.key} htmlFor={`${prefix}-${field.key}`}>
+              {field.label}
+              <input
+                id={`${prefix}-${field.key}`}
+                name={field.key}
+                type="number"
+                inputMode="decimal"
+                min={0}
+                max={field.max}
+                step={field.step}
+                required
+                value={Number.isNaN(input[field.key]) ? "" : input[field.key]}
+                onChange={(event) =>
+                  setInput({
+                    ...input,
+                    [field.key]:
+                      event.target.value === ""
+                        ? NaN
+                        : Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+          ))}
+        </div>
+        <p className="form-help">{t.cpmHelp}</p>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={publish}
+            onChange={(event) => setPublish(event.target.checked)}
+          />
+          <span>{t.publish}</span>
+        </label>
+        <p className="form-help">{t.publishHelp}</p>
+        {error && (
+          <p role="alert" className="form-error">
+            {t[error]}
+          </p>
         )}
-      </button>
+        <button type="submit" className="button button-blue" disabled={busy}>
+          {busy ? (
+            <>
+              <LoaderCircle size={17} className="spin" />
+              {t.saving}
+            </>
+          ) : (
+            <>
+              {t.recalculate}
+              <ArrowRight size={16} />
+            </>
+          )}
+        </button>
+      </fieldset>
     </form>
   );
 }
@@ -855,6 +913,16 @@ function ReportCard({
 }) {
   const t = getDictionary(locale);
   const profile = report.profile;
+  const worthText = money(
+    report.estimate.worth,
+    locale,
+    report.estimate.worth >= 100_000,
+  );
+  const monthText = money(
+    report.estimate.monthly,
+    locale,
+    report.estimate.monthly >= 10_000,
+  );
   return (
     <div className={`share-card ${compact ? "share-card-compact" : ""}`}>
       <div className="share-card-pixels" aria-hidden="true" />
@@ -872,20 +940,27 @@ function ReportCard({
           </span>
         </div>
         <p className="share-value-label">{t.reportWorth}</p>
-        <div className="share-worth">
-          {money(
-            report.estimate.worth,
-            locale,
-            report.estimate.worth >= 100_000,
-          )}
+        <div
+          className="share-worth"
+          style={
+            {
+              "--value-scale": Math.min(1, 8.5 / [...worthText].length),
+            } as CSSProperties
+          }
+          title={money(report.estimate.worth, locale)}
+        >
+          {worthText}
         </div>
         <div className="share-month">
-          <strong>
-            {money(
-              report.estimate.monthly,
-              locale,
-              report.estimate.monthly >= 10_000,
-            )}
+          <strong
+            style={
+              {
+                "--value-scale": Math.min(1, 6.5 / [...monthText].length),
+              } as CSSProperties
+            }
+            title={money(report.estimate.monthly, locale)}
+          >
+            {monthText}
           </strong>
           <span>{t.perMonth}</span>
         </div>
@@ -910,17 +985,68 @@ function ReportCard({
   );
 }
 
-async function downloadCard(report: Report, locale: Locale) {
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+async function downloadCard(
+  report: Report,
+  locale: Locale,
+  signal: AbortSignal,
+): Promise<Blob> {
   await document.fonts.ready;
   const t = getDictionary(locale);
+  async function loadImage(src: string, remote = false) {
+    const image = new window.Image();
+    if (remote) {
+      image.crossOrigin = "anonymous";
+      image.referrerPolicy = "no-referrer";
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => {
+          image.src = "";
+          reject(new Error("image timeout"));
+        },
+        remote ? 4_000 : 10_000,
+      );
+      image.onload = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      image.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error("image"));
+      };
+      image.src = src;
+    });
+    return image;
+  }
+  const [skyline, illustration, avatar] = await Promise.all([
+    loadImage("/vilnius-skyline.svg"),
+    loadImage("/card-illustration.png"),
+    report.profile.avatar
+      ? loadImage(report.profile.avatar, true).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
   const canvas = document.createElement("canvas");
   canvas.width = 1200;
   canvas.height = 750;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas");
-  const font =
-    getComputedStyle(document.body).getPropertyValue("--font-pixel").trim() ||
-    "serif";
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("canvas");
+  const ctx = context;
+  const styles = getComputedStyle(document.body);
+  const pixelFont = styles.getPropertyValue("--font-pixel").trim() || "serif";
+  const sansFont =
+    styles.getPropertyValue("--font-sans").trim() || "sans-serif";
   ctx.fillStyle = "#0033ff";
   ctx.fillRect(0, 0, 1200, 750);
   const gradient = ctx.createLinearGradient(0, 0, 1200, 750);
@@ -928,6 +1054,31 @@ async function downloadCard(report: Report, locale: Locale) {
   gradient.addColorStop(1, "rgba(0,25,220,0)");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 1200, 750);
+  // Match the UI's layer order: scenery and illustration behind readable values.
+  ctx.globalAlpha = 0.7;
+  ctx.drawImage(skyline, 30, 486, 1140, 228);
+  ctx.globalAlpha = 1;
+  ctx.drawImage(illustration, 340, 345, 470, 355);
+  const heart = [
+    "0110110",
+    "1111111",
+    "1111111",
+    "0111110",
+    "0011100",
+    "0001000",
+  ];
+  ctx.fillStyle = "rgba(255,255,255,.45)";
+  for (const [x, y, cell] of [
+    [770, 130, 10],
+    [1030, 190, 7],
+  ]) {
+    heart.forEach((row, rowIndex) =>
+      [...row].forEach((value, column) => {
+        if (value === "1")
+          ctx.fillRect(x + column * cell, y + rowIndex * cell, cell, cell);
+      }),
+    );
+  }
   ctx.fillStyle = "#fff";
   ctx.fillRect(24, 24, 1152, 6);
   ctx.fillRect(24, 720, 1152, 6);
@@ -937,109 +1088,166 @@ async function downloadCard(report: Report, locale: Locale) {
     ctx.fillRect(x, 24, 12, 12);
     ctx.fillRect(x, 714, 12, 12);
   }
-  ctx.fillStyle = report.profile.color;
+  ctx.save();
   ctx.beginPath();
   ctx.arc(103, 105, 36, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#142248";
-  ctx.font = "30px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(report.profile.name.slice(0, 1), 103, 116);
+  ctx.clip();
+  ctx.fillStyle = report.profile.color;
+  ctx.fillRect(67, 69, 72, 72);
+  if (avatar) ctx.drawImage(avatar, 67, 69, 72, 72);
+  else {
+    ctx.fillStyle = "#142248";
+    ctx.font = `40px ${pixelFont}`;
+    ctx.textAlign = "center";
+    ctx.fillText([...report.profile.name][0] || "?", 103, 119);
+  }
+  ctx.restore();
   ctx.textAlign = "left";
   ctx.fillStyle = "#fff";
-  ctx.font = "bold 27px sans-serif";
-  ctx.fillText(
-    localizeProfileName(
-      report.profile.name,
-      report.profile.source,
-      locale,
-    ).slice(0, 38),
-    157,
-    99,
+  function textFit(
+    text: string,
+    x: number,
+    y: number,
+    maxWidth: number,
+    size: number,
+    font: string,
+    weight = "400",
+  ) {
+    ctx.font = `${weight} ${size}px ${font}`;
+    const scale = Math.min(
+      1,
+      maxWidth / Math.max(1, ctx.measureText(text).width),
+    );
+    ctx.font = `${weight} ${size * scale}px ${font}`;
+    ctx.fillText(text, x, y);
+  }
+  let name = localizeProfileName(
+    report.profile.name,
+    report.profile.source,
+    locale,
   );
-  ctx.font = "22px sans-serif";
+  ctx.font = `600 27px ${sansFont}`;
+  while (ctx.measureText(name).width > 650 && name.length > 1)
+    name = [...name].slice(0, -2).join("") + "…";
+  ctx.fillText(name, 157, 99);
+  ctx.font = `22px ${sansFont}`;
   ctx.fillText(`@${report.profile.handle}`, 157, 134);
-  ctx.font = `36px ${font}`;
-  ctx.fillText("unfair · Vilnius", 930, 97);
-  ctx.font = "24px sans-serif";
-  ctx.fillText(t.reportWorth, 72, 227);
-  ctx.font = `120px ${font}`;
-  ctx.fillText(
+  textFit("unfair · Vilnius", 930, 97, 210, 36, pixelFont);
+  textFit(t.reportWorth, 72, 227, 660, 24, sansFont);
+  textFit(
     money(report.estimate.worth, locale, report.estimate.worth >= 100_000),
     68,
     355,
+    500,
+    120,
+    pixelFont,
   );
   ctx.textAlign = "right";
-  ctx.font = `76px ${font}`;
-  ctx.fillText(
+  textFit(
     money(report.estimate.monthly, locale, report.estimate.monthly >= 10_000),
     1110,
     485,
+    355,
+    76,
+    pixelFont,
   );
-  ctx.font = "26px sans-serif";
-  ctx.fillText(t.perMonth, 1110, 525);
+  textFit(t.perMonth, 1110, 525, 355, 26, sansFont);
   ctx.textAlign = "left";
-  async function localImage(src: string) {
-    const image = new window.Image();
-    image.src = src;
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("image"));
-    });
-    return image;
-  }
-  const skyline = await localImage("/vilnius-skyline.svg");
-  ctx.drawImage(skyline, 30, 486, 1140, 228);
-  const illustration = await localImage("/card-illustration.png");
-  ctx.drawImage(illustration, 340, 345, 470, 355);
+  ctx.fillStyle = "rgba(0,20,150,.55)";
+  ctx.fillRect(62, 657, 1080, 39);
   ctx.fillStyle = "#fff";
-  ctx.font = "18px sans-serif";
-  ctx.fillText(`${t[report.profile.source]} · ${t.assumptions} · EUR`, 72, 690);
-
-  const blob = await new Promise<Blob>((resolve, reject) =>
+  textFit(
+    `${t[report.profile.source]} · ${t.assumptions} · EUR`,
+    76,
+    683,
+    1050,
+    18,
+    sansFont,
+  );
+  return new Promise<Blob>((resolve, reject) =>
     canvas.toBlob(
       (value) => (value ? resolve(value) : reject(new Error("blob"))),
       "image/png",
     ),
   );
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `vilnius-worth-${report.profile.handle}.png`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function ShareActions({ report, locale }: { report: Report; locale: Locale }) {
+function ShareActions({
+  report,
+  locale,
+  opponent,
+}: {
+  report: Report;
+  locale: Locale;
+  opponent?: Report;
+}) {
   const t = getDictionary(locale);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<"" | "copyError" | "imageError">("");
   const [compare, setCompare] = useState(false);
+  const activeSave = useRef<AbortController | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      activeSave.current?.abort();
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
   async function copy() {
     try {
       await navigator.clipboard.writeText(window.location.href);
       setCopied(true);
       setError("");
-      setTimeout(() => setCopied(false), 3000);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 3000);
     } catch {
-      setError(t.copyError);
+      setError("copyError");
     }
   }
   async function save() {
+    if (activeSave.current) return;
+    const controller = new AbortController();
+    activeSave.current = controller;
     setSaving(true);
     setError("");
     try {
-      await downloadCard(report, locale);
+      let blob: Blob;
+      if (opponent) {
+        const response = await fetch(
+          comparisonImageUrl(
+            report.profile.handle,
+            opponent.profile.handle,
+            locale,
+            window.location.search,
+          ),
+          { signal: controller.signal },
+        );
+        if (
+          !response.ok ||
+          !response.headers.get("content-type")?.includes("image/png")
+        )
+          throw new Error("image");
+        blob = await response.blob();
+      } else {
+        blob = await downloadCard(report, locale, controller.signal);
+      }
+      if (!controller.signal.aborted)
+        downloadBlob(
+          blob,
+          `vilnius-worth-${report.profile.handle}${opponent ? `-vs-${opponent.profile.handle}` : ""}.png`,
+        );
     } catch {
-      setError(t.imageError);
+      if (!controller.signal.aborted) setError("imageError");
     } finally {
-      setSaving(false);
+      activeSave.current = null;
+      if (!controller.signal.aborted) setSaving(false);
     }
   }
   function share() {
     window.open(
-      `https://twitter.com/intent/tweet?text=${encodeURIComponent(t.shareText)}&url=${encodeURIComponent(window.location.href)}`,
+      `https://twitter.com/intent/tweet?text=${encodeURIComponent(opponent ? t.shareComparisonText : t.shareText)}&url=${encodeURIComponent(window.location.href)}`,
       "_blank",
       "noopener,noreferrer",
     );
@@ -1068,27 +1276,30 @@ function ShareActions({ report, locale }: { report: Report; locale: Locale }) {
           <XMark size={14} />
           {t.postOnX}
         </button>
-        <button
-          type="button"
-          className="button button-white"
-          onClick={() => setCompare(!compare)}
-          aria-expanded={compare}
-        >
-          {t.compare}
-          <Plus size={15} />
-        </button>
+        {!opponent && (
+          <button
+            type="button"
+            className="button button-white"
+            onClick={() => setCompare(!compare)}
+            aria-expanded={compare}
+            aria-controls="comparison-form"
+          >
+            {t.compare}
+            <Plus size={15} />
+          </button>
+        )}
       </div>
       <span className="sr-only" role="status">
         {copied ? t.copied : ""}
       </span>
       {error && (
         <p className="form-error" role="alert">
-          {error}
+          {t[error]}
         </p>
       )}
       {compare && (
-        <div className="compare-form">
-          <label>{t.compareHandle}</label>
+        <div className="compare-form" id="comparison-form">
+          <p>{t.compareHandle}</p>
           <HandleForm locale={locale} comparisonWith={report.profile.handle} />
         </div>
       )}
@@ -1143,7 +1354,7 @@ function TopPost({
 function Projection({ report, locale }: { report: Report; locale: Locale }) {
   const t = getDictionary(locale);
   const amount = report.estimate.annual;
-  const path = amount ? "M48 210 L612 30" : "M48 210 L612 210";
+  const path = amount ? "M84 210 L612 30" : "M84 210 L612 210";
   return (
     <section className="projection-card">
       <div className="projection-heading">
@@ -1151,7 +1362,9 @@ function Projection({ report, locale }: { report: Report; locale: Locale }) {
           <h2>{t.projection}</h2>
           <p>{t.projectionDescription}</p>
         </div>
-        <strong>{money(amount, locale)}</strong>
+        <strong title={money(amount, locale)}>
+          {money(amount, locale, amount >= 100_000)}
+        </strong>
       </div>
       <svg
         className="income-chart"
@@ -1174,20 +1387,20 @@ function Projection({ report, locale }: { report: Report; locale: Locale }) {
         {[30, 90, 150, 210].map((y, i) => (
           <g key={y}>
             <line
-              x1="48"
+              x1="84"
               x2="612"
               y1={y}
               y2={y}
               stroke="#eceef2"
               strokeDasharray="3 5"
             />
-            <text x="40" y={y + 4} textAnchor="end">
+            <text x="76" y={y + 4} textAnchor="end">
               {number((amount * (3 - i)) / 3, locale, true)}
             </text>
           </g>
         ))}
         <path
-          d={`${path} L612 210 L48 210 Z`}
+          d={`${path} L612 210 L84 210 Z`}
           fill={`url(#chart-gradient-${report.profile.handle})`}
         />
         <path
@@ -1198,7 +1411,7 @@ function Projection({ report, locale }: { report: Report; locale: Locale }) {
           strokeLinecap="round"
         />
         {[0, 3, 6, 9, 12].map((month) => (
-          <text key={month} x={48 + month * 47} y="238" textAnchor="middle">
+          <text key={month} x={84 + month * 44} y="238" textAnchor="middle">
             {month}
           </text>
         ))}
@@ -1209,11 +1422,23 @@ function Projection({ report, locale }: { report: Report; locale: Locale }) {
       <div className="scenario-grid">
         <div>
           <span>{t.lowScenario}</span>
-          <strong>{money(report.estimate.lowAnnual, locale)}</strong>
+          <strong title={money(report.estimate.lowAnnual, locale)}>
+            {money(
+              report.estimate.lowAnnual,
+              locale,
+              report.estimate.lowAnnual >= 100_000,
+            )}
+          </strong>
         </div>
         <div>
           <span>{t.highScenario}</span>
-          <strong>{money(report.estimate.highAnnual, locale)}</strong>
+          <strong title={money(report.estimate.highAnnual, locale)}>
+            {money(
+              report.estimate.highAnnual,
+              locale,
+              report.estimate.highAnnual >= 100_000,
+            )}
+          </strong>
         </div>
       </div>
     </section>
@@ -1250,8 +1475,7 @@ function SingleReport({ locale, handle }: { locale: Locale; handle: string }) {
   function onSaved(nextReport: Report) {
     setReport(nextReport);
     setSaved(true);
-    const url = new URL(window.location.href);
-    url.searchParams.set("report", nextReport.id);
+    const url = updateReportQuery(new URL(window.location.href), nextReport.id);
     window.history.replaceState(null, "", url);
   }
   if (loading)
@@ -1285,19 +1509,41 @@ function SingleReport({ locale, handle }: { locale: Locale; handle: string }) {
   return (
     <div className="report-container">
       <ReportCard locale={locale} report={report} />
-      <ShareActions locale={locale} report={report} />
+      <ShareActions
+        key={`${report.id}-${locale}`}
+        locale={locale}
+        report={report}
+      />
       <div className="report-facts">
         <div>
           <span>{t.followers}</span>
-          <strong>{number(report.profile.metrics.followers, locale)}</strong>
+          <strong title={number(report.profile.metrics.followers, locale)}>
+            {number(
+              report.profile.metrics.followers,
+              locale,
+              report.profile.metrics.followers >= 100_000,
+            )}
+          </strong>
         </div>
         <div>
           <span>{t.medianViews}</span>
-          <strong>{number(report.profile.metrics.medianViews, locale)}</strong>
+          <strong title={number(report.profile.metrics.medianViews, locale)}>
+            {number(
+              report.profile.metrics.medianViews,
+              locale,
+              report.profile.metrics.medianViews >= 100_000,
+            )}
+          </strong>
         </div>
         <div>
           <span>{t.perPost}</span>
-          <strong>{money(report.estimate.perPost, locale)}</strong>
+          <strong title={money(report.estimate.perPost, locale)}>
+            {money(
+              report.estimate.perPost,
+              locale,
+              report.estimate.perPost >= 100_000,
+            )}
+          </strong>
         </div>
       </div>
       <p className="report-source">
@@ -1367,8 +1613,11 @@ function Comparison({
   const second = useReport(opponent, false);
   function saveReport(nextReport: Report, primary: boolean) {
     (primary ? first : second).setReport(nextReport);
-    const url = new URL(window.location.href);
-    url.searchParams.set(primary ? "report" : "otherReport", nextReport.id);
+    const url = updateReportQuery(
+      new URL(window.location.href),
+      nextReport.id,
+      primary,
+    );
     window.history.replaceState(null, "", url);
   }
   const rows = [
@@ -1420,6 +1669,7 @@ function Comparison({
                     <Plus size={18} />
                   </summary>
                   <MetricsForm
+                    key={item.report.id}
                     locale={locale}
                     handle={index === 0 ? handle : opponent}
                     name={item.report.profile.name}
@@ -1442,6 +1692,14 @@ function Comparison({
           </div>
         ))}
       </div>
+      {first.report && second.report && (
+        <ShareActions
+          key={`${first.report.id}-${second.report.id}-${locale}`}
+          locale={locale}
+          report={first.report}
+          opponent={second.report}
+        />
+      )}
       {first.report && second.report && (
         <div className="comparison-table-wrap">
           <table className="comparison-table">

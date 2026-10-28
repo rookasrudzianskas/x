@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -18,16 +18,18 @@ import {
   CreatorHeader,
   euro,
   requestError,
+  RequestError,
   type Locale,
 } from "../creator/Shared";
 import shared from "../creator/Creator.module.css";
 import styles from "./Brands.module.css";
+import { campaignBudget } from "./campaign-budget";
 
 export function BrandPage({ locale }: { locale: Locale }) {
   const [creators, setCreators] = useState(3);
   const [posts, setPosts] = useState(2);
-  const [rate, setRate] = useState(100);
-  const [production, setProduction] = useState(0);
+  const [rateText, setRateText] = useState("100");
+  const [productionText, setProductionText] = useState("0");
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -36,10 +38,17 @@ export function BrandPage({ locale }: { locale: Locale }) {
   });
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ id: string; budget: number } | null>(
+    null,
+  );
   const contact = useRef<HTMLElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
-  const total = creators * posts * rate + production;
+  const inFlight = useRef(false);
+  const success = useRef<HTMLDivElement>(null);
+  const budget = campaignBudget(creators, posts, rateText, productionText);
+  useEffect(() => {
+    if (saved) success.current?.focus();
+  }, [saved]);
   function scrollToForm() {
     contact.current?.scrollIntoView({
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -50,20 +59,25 @@ export function BrandPage({ locale }: { locale: Locale }) {
     nameInput.current?.focus({ preventScroll: true });
   }
   function exportPlan() {
+    if (!budget) return;
     const url = URL.createObjectURL(
       new Blob(
         [
           JSON.stringify(
             {
               city: "Vilnius, Lithuania",
+              locale,
               currency: "EUR",
               creators,
               postsPerCreator: posts,
-              ratePerPost: rate,
-              productionBudget: production,
-              total,
-              assumptions:
+              ratePerPost: budget.rate,
+              productionBudget: budget.production,
+              total: budget.total,
+              assumptions: copy(
+                locale,
                 "Illustrative budget. No booking, availability or market rate is implied.",
+                "Pavyzdinis biudžetas. Užsakymas, prieinamumas ar rinkos įkainis nepatvirtinami.",
+              ),
               createdAt: new Date().toISOString(),
             },
             null,
@@ -76,25 +90,60 @@ export function BrandPage({ locale }: { locale: Locale }) {
     const link = document.createElement("a");
     link.href = url;
     link.download = "vilnius-campaign-plan.json";
+    document.body.appendChild(link);
     link.click();
+    link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    setSending(true);
+    if (inFlight.current) return;
     setError("");
+    const details = {
+      name: form.name.trim(),
+      email: form.email.trim().toLowerCase(),
+      company: form.company.trim(),
+      message: form.message.trim(),
+    };
+    if (!budget) {
+      setError(
+        copy(
+          locale,
+          "Check both amounts in your campaign plan before saving.",
+          "Prieš išsaugant patikrink abi kampanijos plano sumas.",
+        ),
+      );
+      return;
+    }
+    if (!details.name || !details.company || details.message.length < 10) {
+      setError(
+        copy(
+          locale,
+          "Enter your name, company and at least 10 characters about the idea.",
+          "Įvesk vardą, įmonę ir bent 10 simbolių apie idėją.",
+        ),
+      );
+      return;
+    }
+    const submittedBudget = budget.total;
+    inFlight.current = true;
+    setSending(true);
     try {
       const result = await api<{ ok: true; id: string }>(
         "/api/bookings",
         "POST",
-        { ...form, budget: total, locale },
+        { ...details, budget: submittedBudget, locale },
       );
-      if (!result.ok || !result.id)
-        throw new Error("The request could not be confirmed.");
-      setSaved(result.id);
+      if (result.ok !== true || typeof result.id !== "string" || !result.id)
+        throw new RequestError(
+          "The request could not be confirmed. Please try again.",
+          "service_error",
+        );
+      setSaved({ id: result.id, budget: submittedBudget });
     } catch (error) {
       setError(requestError(locale, error));
     } finally {
+      inFlight.current = false;
       setSending(false);
     }
   }
@@ -273,15 +322,13 @@ export function BrandPage({ locale }: { locale: Locale }) {
                   onClick={() => {
                     setCreators(index === 0 ? 1 : index === 1 ? 3 : 5);
                     setPosts(index === 2 ? 4 : index === 1 ? 2 : 1);
-                    document
-                      .getElementById("planner")
-                      ?.scrollIntoView({
-                        behavior: window.matchMedia(
-                          "(prefers-reduced-motion: reduce)",
-                        ).matches
-                          ? "auto"
-                          : "smooth",
-                      });
+                    document.getElementById("planner")?.scrollIntoView({
+                      behavior: window.matchMedia(
+                        "(prefers-reduced-motion: reduce)",
+                      ).matches
+                        ? "auto"
+                        : "smooth",
+                    });
                   }}
                 >
                   {copy(locale, "Explore this plan", "Išbandyti šį planą")}
@@ -340,6 +387,7 @@ export function BrandPage({ locale }: { locale: Locale }) {
                 <strong>{creators}</strong>
               </label>
               <input
+                disabled={sending}
                 id="creators-range"
                 type="range"
                 min={1}
@@ -358,6 +406,7 @@ export function BrandPage({ locale }: { locale: Locale }) {
                 <strong>{posts}</strong>
               </label>
               <input
+                disabled={sending}
                 id="posts-range"
                 type="range"
                 min={1}
@@ -374,40 +423,37 @@ export function BrandPage({ locale }: { locale: Locale }) {
               <label>
                 {copy(locale, "Rate per post (€)", "Įrašo įkainis (€)")}
                 <input
-                  type="number"
-                  min={0}
-                  max={100000}
-                  step={10}
-                  value={rate}
-                  onChange={(event) =>
-                    setRate(
-                      Math.min(
-                        100000,
-                        Math.max(0, Number(event.target.value) || 0),
-                      ),
-                    )
-                  }
+                  type="text"
+                  inputMode="decimal"
+                  maxLength={10}
+                  disabled={sending}
+                  value={rateText}
+                  onChange={(event) => setRateText(event.target.value)}
+                  aria-describedby={!budget ? "budget-error" : undefined}
                 />
               </label>
               <label>
                 {copy(locale, "Production budget (€)", "Kūrybos biudžetas (€)")}
                 <input
-                  type="number"
-                  min={0}
-                  max={1000000}
-                  step={10}
-                  value={production}
-                  onChange={(event) =>
-                    setProduction(
-                      Math.min(
-                        1000000,
-                        Math.max(0, Number(event.target.value) || 0),
-                      ),
-                    )
-                  }
+                  type="text"
+                  inputMode="decimal"
+                  maxLength={10}
+                  disabled={sending}
+                  value={productionText}
+                  onChange={(event) => setProductionText(event.target.value)}
+                  aria-describedby={!budget ? "budget-error" : undefined}
                 />
               </label>
             </div>
+            {!budget && (
+              <p id="budget-error" className={shared.error} role="status">
+                {copy(
+                  locale,
+                  "Enter both amounts from €0 to €1,000,000, using at most two decimal places.",
+                  "Įvesk abi sumas nuo 0 iki 1 000 000 €, naudodamas ne daugiau kaip du skaitmenis po kablelio.",
+                )}
+              </p>
+            )}
             <div className={styles.total}>
               <div>
                 <span>
@@ -417,13 +463,15 @@ export function BrandPage({ locale }: { locale: Locale }) {
                     "Pavyzdinis kampanijos biudžetas",
                   )}
                 </span>
-                <strong aria-live="polite">{euro(total, locale)}</strong>
+                <strong aria-live="polite">
+                  {budget ? euro(budget.total, locale) : "—"}
+                </strong>
               </div>
               <Sparkles size={26} />
             </div>
             <p className={styles.formula}>
-              {creators} × {posts} × {euro(rate, locale)} +{" "}
-              {euro(production, locale)}
+              {creators} × {posts} × {budget ? euro(budget.rate, locale) : "—"}{" "}
+              + {budget ? euro(budget.production, locale) : "—"}
               <br />
               {copy(
                 locale,
@@ -432,11 +480,19 @@ export function BrandPage({ locale }: { locale: Locale }) {
               )}
             </p>
             <div className={styles.budgetActions}>
-              <button className={shared.primaryButton} onClick={scrollToForm}>
+              <button
+                className={shared.primaryButton}
+                disabled={!budget || sending}
+                onClick={scrollToForm}
+              >
                 {copy(locale, "Discuss this plan", "Aptarti šį planą")}
                 <ArrowRight size={15} />
               </button>
-              <button className={shared.textButton} onClick={exportPlan}>
+              <button
+                className={shared.textButton}
+                disabled={!budget || sending}
+                onClick={exportPlan}
+              >
                 <Download size={14} />
                 {copy(locale, "Export", "Eksportuoti")}
               </button>
@@ -539,7 +595,12 @@ export function BrandPage({ locale }: { locale: Locale }) {
             </Link>
           </div>
           {saved ? (
-            <div className={styles.success} role="status">
+            <div
+              ref={success}
+              className={styles.success}
+              role="status"
+              tabIndex={-1}
+            >
               <CheckCircle2 size={34} />
               <h3>
                 {copy(
@@ -556,12 +617,18 @@ export function BrandPage({ locale }: { locale: Locale }) {
                 )}
               </p>
               <span>
-                {copy(locale, "Reference", "Numeris")}: {saved}
+                {copy(locale, "Reference", "Numeris")}: {saved.id}
               </span>
+              <p>
+                {copy(locale, "Submitted budget", "Pateiktas biudžetas")}:{" "}
+                <strong>{euro(saved.budget, locale)}</strong>
+              </p>
               <button
                 className={shared.secondaryButton}
                 onClick={() => {
                   setSaved(null);
+                  setError("");
+                  requestAnimationFrame(() => nameInput.current?.focus());
                   setForm({ name: "", email: "", company: "", message: "" });
                 }}
               >
@@ -569,102 +636,115 @@ export function BrandPage({ locale }: { locale: Locale }) {
               </button>
             </div>
           ) : (
-            <form onSubmit={submit} className={styles.contactForm}>
-              <div className={styles.contactFields}>
+            <form
+              onSubmit={submit}
+              className={styles.contactForm}
+              aria-busy={sending}
+            >
+              <fieldset disabled={sending} className={styles.formFields}>
+                <div className={styles.contactFields}>
+                  <label>
+                    {copy(locale, "Your name", "Tavo vardas")}
+                    <input
+                      ref={nameInput}
+                      autoComplete="name"
+                      required
+                      maxLength={80}
+                      value={form.name}
+                      onChange={(event) =>
+                        setForm({ ...form, name: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label>
+                    {copy(locale, "Work email", "Darbo el. paštas")}
+                    <input
+                      type="email"
+                      autoComplete="email"
+                      required
+                      maxLength={254}
+                      value={form.email}
+                      onChange={(event) =>
+                        setForm({ ...form, email: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
                 <label>
-                  {copy(locale, "Your name", "Tavo vardas")}
+                  {copy(locale, "Company / project", "Įmonė / projektas")}
                   <input
-                    ref={nameInput}
-                    autoComplete="name"
+                    autoComplete="organization"
                     required
-                    maxLength={80}
-                    value={form.name}
+                    maxLength={120}
+                    value={form.company}
                     onChange={(event) =>
-                      setForm({ ...form, name: event.target.value })
+                      setForm({ ...form, company: event.target.value })
                     }
                   />
                 </label>
                 <label>
-                  {copy(locale, "Work email", "Darbo el. paštas")}
-                  <input
-                    type="email"
-                    autoComplete="email"
-                    required
-                    maxLength={254}
-                    value={form.email}
-                    onChange={(event) =>
-                      setForm({ ...form, email: event.target.value })
-                    }
-                  />
-                </label>
-              </div>
-              <label>
-                {copy(locale, "Company / project", "Įmonė / projektas")}
-                <input
-                  autoComplete="organization"
-                  required
-                  maxLength={120}
-                  value={form.company}
-                  onChange={(event) =>
-                    setForm({ ...form, company: event.target.value })
-                  }
-                />
-              </label>
-              <label>
-                {copy(locale, "Tell us about the idea", "Papasakok apie idėją")}
-                <textarea
-                  required
-                  minLength={10}
-                  maxLength={3000}
-                  rows={4}
-                  value={form.message}
-                  onChange={(event) =>
-                    setForm({ ...form, message: event.target.value })
-                  }
-                  placeholder={copy(
-                    locale,
-                    "Audience, timeline, creative idea, and what success looks like…",
-                    "Auditorija, laikas, kūrybinė idėja ir kaip vertinsi sėkmę…",
-                  )}
-                />
-              </label>
-              <div className={styles.enquiryBudget}>
-                <span>
                   {copy(
                     locale,
-                    "Budget from your plan",
-                    "Biudžetas iš tavo plano",
+                    "Tell us about the idea",
+                    "Papasakok apie idėją",
                   )}
-                </span>
-                <strong>{euro(total, locale)}</strong>
-                <a href="#planner">{copy(locale, "Edit", "Keisti")}</a>
-              </div>
-              <p className={styles.privacyNote}>
-                {copy(
-                  locale,
-                  "Your contact details and brief are stored so this request can be reviewed. Read our",
-                  "Tavo kontaktiniai duomenys ir užduotis saugomi, kad užklausą būtų galima peržiūrėti. Skaityk",
-                )}{" "}
-                <Link href={`/${locale}/privacy`}>
-                  {copy(locale, "privacy notice", "privatumo informaciją")}
-                </Link>
-                .
-              </p>
-              {error && (
-                <p className={shared.error} role="alert">
-                  {error}
+                  <textarea
+                    required
+                    minLength={10}
+                    maxLength={3000}
+                    rows={4}
+                    value={form.message}
+                    onChange={(event) =>
+                      setForm({ ...form, message: event.target.value })
+                    }
+                    placeholder={copy(
+                      locale,
+                      "Audience, timeline, creative idea, and what success looks like…",
+                      "Auditorija, laikas, kūrybinė idėja ir kaip vertinsi sėkmę…",
+                    )}
+                  />
+                </label>
+                <div className={styles.enquiryBudget}>
+                  <span>
+                    {copy(
+                      locale,
+                      "Budget from your plan",
+                      "Biudžetas iš tavo plano",
+                    )}
+                  </span>
+                  <strong>{budget ? euro(budget.total, locale) : "—"}</strong>
+                  <a href="#planner">{copy(locale, "Edit", "Keisti")}</a>
+                </div>
+                <p className={styles.privacyNote}>
+                  {copy(
+                    locale,
+                    "Your contact details and brief are stored so this request can be reviewed. Read our",
+                    "Tavo kontaktiniai duomenys ir užduotis saugomi, kad užklausą būtų galima peržiūrėti. Skaityk",
+                  )}{" "}
+                  <Link href={`/${locale}/privacy`}>
+                    {copy(locale, "privacy notice", "privatumo informaciją")}
+                  </Link>
+                  .
                 </p>
-              )}
-              <button className={shared.primaryButton} disabled={sending}>
-                {copy(
-                  locale,
-                  sending ? "Saving request…" : "Save campaign enquiry",
-                  sending
-                    ? "Užklausa saugoma…"
-                    : "Išsaugoti kampanijos užklausą",
+                {error && (
+                  <p className={shared.error} role="alert">
+                    {error}
+                  </p>
                 )}
-                <ArrowRight size={16} />
-              </button>
+                <button
+                  className={shared.primaryButton}
+                  disabled={sending || !budget}
+                >
+                  {copy(
+                    locale,
+                    sending ? "Saving request…" : "Save campaign enquiry",
+                    sending
+                      ? "Užklausa saugoma…"
+                      : "Išsaugoti kampanijos užklausą",
+                  )}
+                  <ArrowRight size={16} />
+                </button>
+              </fieldset>
             </form>
           )}
         </section>

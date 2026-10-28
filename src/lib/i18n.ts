@@ -32,6 +32,8 @@ const en = {
   x: "Metrics from X",
   sampleNote:
     "Sample profiles are fictional examples, not real people, claimed accounts or paid campaigns.",
+  boardPageUnavailable:
+    "Couldn’t load more profiles. Your current results are still here; try again.",
   boardUnavailable:
     "Showing example profiles. The saved profile directory is temporarily unavailable.",
   cityBandTop: "A small city. A world of possibility.",
@@ -68,6 +70,8 @@ const en = {
   compare: "Compare",
   compareHandle: "Compare with another X handle",
   compareError: "Choose a different account to compare.",
+  shareComparisonText:
+    "Two X audiences, side by side. Explore an illustrative sponsorship comparison, made in Vilnius.",
   shareText:
     "What could my X audience earn? My illustrative sponsorship estimate, made in Vilnius.",
   copyError:
@@ -87,13 +91,17 @@ const en = {
   recalculate: "Calculate my estimate",
   formError:
     "Check your numbers. Use non-negative values and no more than 7 sponsored posts per week.",
+  saveRateLimit:
+    "Too many reports were saved at once. Please wait a minute and try again.",
+  insufficientMetrics:
+    "There aren’t enough recent posts with impression data for an estimate. Enter your own metrics below.",
   saveError: "We couldn’t save this report. Please try again.",
   notConfigured:
     "Live X lookup is not connected yet. You can still calculate an estimate with your own metrics below.",
   notFound:
     "We couldn’t find that X account. Check the handle, or enter your metrics below.",
   rateLimited:
-    "X is temporarily busy. Try again later, or enter your metrics below.",
+    "Too many requests. Please wait a moment, or enter your metrics below.",
   lookupFailed:
     "We couldn’t load this profile right now. Enter your metrics below to continue.",
   reportMissing:
@@ -185,6 +193,8 @@ const lt: Record<keyof typeof en, string> = {
   x: "Duomenys iš X",
   sampleNote:
     "Pavyzdiniai profiliai yra išgalvoti. Tai nėra tikri žmonės, patvirtintos paskyros ar apmokėtos kampanijos.",
+  boardPageUnavailable:
+    "Nepavyko įkelti daugiau profilių. Dabartiniai rezultatai išliko – bandyk dar kartą.",
   boardUnavailable:
     "Rodomi pavyzdiniai profiliai. Išsaugotų profilių sąrašas laikinai nepasiekiamas.",
   cityBandTop: "Mažas miestas. Didelės galimybės.",
@@ -222,6 +232,8 @@ const lt: Record<keyof typeof en, string> = {
   compare: "Palyginti",
   compareHandle: "Palygink su kita X paskyra",
   compareError: "Palyginimui pasirink kitą paskyrą.",
+  shareComparisonText:
+    "Dvi X auditorijos greta. Pavyzdinis reklaminio bendradarbiavimo vertės palyginimas, sukurtas Vilniuje.",
   shareText:
     "Kiek galėtų uždirbti mano X auditorija? Mano pavyzdinis bendradarbiavimo vertės skaičiavimas, sukurtas Vilniuje.",
   copyError: "Nepavyko nukopijuoti nuorodos. Nukopijuok adresą iš naršyklės.",
@@ -241,13 +253,16 @@ const lt: Record<keyof typeof en, string> = {
   recalculate: "Apskaičiuoti mano pajamas",
   formError:
     "Patikrink skaičius. Įvesk neneigiamas reikšmes ir ne daugiau nei 7 reklaminius įrašus per savaitę.",
+  saveRateLimit:
+    "Per trumpą laiką išsaugota per daug skaičiavimų. Palauk minutę ir bandyk dar kartą.",
+  insufficientMetrics:
+    "Nepakanka naujausių įrašų su parodymų duomenimis. Žemiau gali įvesti savo duomenis.",
   saveError: "Nepavyko išsaugoti skaičiavimo. Bandyk dar kartą.",
   notConfigured:
     "Tiesioginė X duomenų paieška dar neprijungta. Žemiau gali apskaičiuoti pajamas pagal savo duomenis.",
   notFound:
     "Šios X paskyros rasti nepavyko. Patikrink vardą arba įvesk duomenis žemiau.",
-  rateLimited:
-    "X laikinai nepasiekiamas. Bandyk vėliau arba įvesk duomenis žemiau.",
+  rateLimited: "Per daug užklausų. Trumpai palauk arba įvesk duomenis žemiau.",
   lookupFailed:
     "Dabar nepavyko įkelti profilio. Tęsk įvesdamas savo duomenis žemiau.",
   reportMissing:
@@ -338,7 +353,7 @@ export function money(value: number, locale: Locale, compact = false) {
   return new Intl.NumberFormat(locale === "lt" ? "lt-LT" : "en-IE", {
     style: "currency",
     currency: "EUR",
-    maximumFractionDigits: compact ? 1 : 0,
+    maximumFractionDigits: compact ? 1 : value > 0 && value < 10 ? 2 : 0,
     ...(compact ? { notation: "compact" as const } : {}),
   }).format(value);
 }

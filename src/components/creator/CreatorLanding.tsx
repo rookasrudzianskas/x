@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -26,6 +27,7 @@ import {
   LoginDialog,
   readDraft,
   requestError,
+  RequestError,
   saveDraft,
   type CreatorProfile,
   type Locale,
@@ -33,29 +35,25 @@ import {
 } from "./Shared";
 import styles from "./Creator.module.css";
 
-function normalizeHandle(value: string, platform: "x" | "linkedin") {
-  const raw = value.trim();
-  if (platform === "linkedin")
-    return (
-      raw.match(
-        /^(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([a-zA-Z0-9-]{3,100})\/?(?:[?#].*)?$/,
-      )?.[1] ?? null
-    );
-  const match = raw.match(
-    /^(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/@?([a-zA-Z0-9_]{1,15})\/?(?:[?#].*)?$/i,
-  );
-  const handle = match?.[1] ?? raw.replace(/^@/, "");
-  return /^[a-zA-Z0-9_]{1,15}$/.test(handle) ? handle : null;
-}
+import {
+  externalProfileUrl,
+  normalizeCreatorInput,
+  parseCreatorProfile,
+} from "./profile-data";
+import { offerTitle, offerUnit, profileOffers } from "@/lib/creator-offers";
+import { createOfferDrafts, readOfferDrafts } from "./offer-drafts";
+import { OffersEditor } from "./OffersEditor";
 
 export function ProfilePreview({
   profile,
   locale,
   publicView = false,
+  saved,
 }: {
   profile: CreatorProfile;
   locale: Locale;
   publicView?: boolean;
+  saved?: "local" | "account";
 }) {
   return (
     <article className={styles.profilePreview}>
@@ -79,15 +77,32 @@ export function ProfilePreview({
             locale,
             publicView
               ? "Published profile · self-reported"
-              : "Preview · saved on this device",
+              : saved === "local"
+                ? "Draft · saved on this device"
+                : saved === "account"
+                  ? "Private draft · saved to your account"
+                  : "Preview · not saved yet",
             publicView
               ? "Viešas profilis · pateikti duomenys"
-              : "Peržiūra · saugoma šiame įrenginyje",
+              : saved === "local"
+                ? "Juodraštis · išsaugotas šiame įrenginyje"
+                : saved === "account"
+                  ? "Privatus juodraštis · išsaugotas paskyroje"
+                  : "Peržiūra · dar neišsaugota",
           )}
         </span>
         <h2>{profile.name || copy(locale, "Your name", "Tavo vardas")}</h2>
         <p className={styles.muted}>
-          @{profile.handle} · {profile.location}
+          <a
+            href={externalProfileUrl(profile)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {profile.platform === "linkedin"
+              ? `linkedin.com/in/${profile.handle}`
+              : `@${profile.handle}`}
+          </a>{" "}
+          · {profile.location}
         </p>
         <p className={styles.bio}>
           {profile.bio ||
@@ -98,20 +113,25 @@ export function ProfilePreview({
             )}
         </p>
         {profile.niche && <span className={styles.topic}>{profile.niche}</span>}
-        <div className={styles.profileRate}>
-          <div>
-            <strong>
-              {copy(locale, "Sponsored post", "Reklaminis įrašas")}
-            </strong>
-            <small>
-              {copy(
-                locale,
-                "Scope and terms agreed with the brand",
-                "Apimtis ir sąlygos derinamos su prekių ženklu",
-              )}
-            </small>
-          </div>
-          <b>{euro(profile.rate, locale)}</b>
+        <div className={styles.profileOffers}>
+          {profileOffers(profile).map((offer) => (
+            <div className={styles.profileRate} key={offer.id}>
+              <div>
+                <strong>{offerTitle(offer, locale)}</strong>
+                <small>
+                  {copy(
+                    locale,
+                    "Scope and terms by agreement",
+                    "Apimtis ir sąlygos derinamos",
+                  )}
+                </small>
+              </div>
+              <div className={styles.offerAmount}>
+                <b>{euro(offer.price, locale)}</b>
+                <small>/ {offerUnit(offer.unit, locale)}</small>
+              </div>
+            </div>
+          ))}
         </div>
         <p className={styles.finePrint}>
           {copy(
@@ -145,6 +165,13 @@ export function ProfileEditor({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [publish, setPublish] = useState(initial.published);
+  const [offerRows, setOfferRows] = useState(() => createOfferDrafts(initial));
+  const [invalidOfferId, setInvalidOfferId] = useState<string>();
+  const saving = useRef(false);
+  const stepHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    stepHeading.current?.focus();
+  }, [step]);
   const labels = copy(
     locale,
     ["Your profile", "Your rates", "Preview & save"],
@@ -176,33 +203,42 @@ export function ProfileEditor({
     value: CreatorProfile[K],
   ) => setProfile((current) => ({ ...current, [key]: value }));
   async function save(remote: boolean) {
+    if (saving.current) return;
+    saving.current = true;
     setBusy(true);
     setError("");
     try {
-      const payload = {
+      const payload = parseCreatorProfile({
         ...profile,
         name: profile.name.trim(),
         handle: profile.handle.trim(),
+        bio: profile.bio.trim(),
+        location: profile.location.trim(),
+        niche: profile.niche.trim(),
+        profileUrl: externalProfileUrl(profile),
         published: remote && publish,
-      };
-      if (remote) {
-        const result = await api<{ profile: CreatorProfile }>(
-          "/api/creator",
-          "PUT",
-          {
-            profile: {
-              name: payload.name,
-              handle: payload.handle,
-              bio: payload.bio,
-              location: payload.location,
-              niche: payload.niche,
-              rate: payload.rate,
-              published: payload.published,
-            },
-          },
+      });
+      if (!payload)
+        throw new RequestError(
+          "Please check your profile and offer details before saving.",
+          "validation_error",
         );
-        saveDraft({ ...payload, published: false });
-        onSaved(result.profile ?? payload, true);
+      if (remote) {
+        if (!user || payload.platform === "linkedin")
+          throw new RequestError(
+            "Sign in to save an X profile to your account.",
+            "unauthorized",
+          );
+        const result = await api<{ profile: unknown }>("/api/creator", "PUT", {
+          profile: payload,
+        });
+        const savedProfile = parseCreatorProfile(result.profile);
+        if (!savedProfile)
+          throw new RequestError(
+            "The saved profile could not be confirmed. Reload your dashboard before trying again.",
+            "service_error",
+          );
+        onSaved(savedProfile, true);
       } else {
         saveDraft(payload);
         onSaved({ ...payload, published: false }, false);
@@ -210,6 +246,7 @@ export function ProfileEditor({
     } catch (error) {
       setError(requestError(locale, error));
     } finally {
+      saving.current = false;
       setBusy(false);
     }
   }
@@ -219,10 +256,16 @@ export function ProfileEditor({
       title={copy(locale, "Build your creator page", "Sukurk kūrėjo puslapį")}
       locale={locale}
       onClose={onClose}
+      closeDisabled={busy}
     >
       <ol className={styles.steps}>
         {labels.map((label, index) => (
-          <li key={label} data-active={step === index} data-done={step > index}>
+          <li
+            key={label}
+            data-active={step === index}
+            data-done={step > index}
+            aria-current={step === index ? "step" : undefined}
+          >
             <span>{step > index ? <Check size={12} /> : index + 1}</span>
             {label}
           </li>
@@ -243,6 +286,7 @@ export function ProfileEditor({
         className={styles.form}
         onSubmit={(event) => {
           event.preventDefault();
+          if (saving.current) return;
           setError("");
           if (
             step === 0 &&
@@ -259,243 +303,252 @@ export function ProfileEditor({
             );
             return;
           }
+          if (step === 1) {
+            const result = readOfferDrafts(offerRows);
+            setInvalidOfferId(result.id);
+            if (result.error) {
+              const message =
+                result.error === "empty"
+                  ? copy(
+                      locale,
+                      "Choose at least one offer to continue.",
+                      "Norėdamas tęsti pasirink bent vieną pasiūlymą.",
+                    )
+                  : result.error === "amount"
+                    ? copy(
+                        locale,
+                        "Use a price from €0 to €1,000,000 with at most two decimal places for each enabled offer.",
+                        "Kiekvieno pasirinkto pasiūlymo kaina turi būti nuo 0 iki 1 000 000 € su ne daugiau kaip dviem skaitmenimis po kablelio.",
+                      )
+                    : result.error === "title"
+                      ? copy(
+                          locale,
+                          "Give each custom offer a title of 1–80 characters.",
+                          "Kiekvienam individualiam pasiūlymui suteik 1–80 simbolių pavadinimą.",
+                        )
+                      : copy(
+                          locale,
+                          "Check your offer details and try again.",
+                          "Patikrink pasiūlymus ir bandyk dar kartą.",
+                        );
+              setError(message);
+              return;
+            }
+            const post = result.offers.find((offer) => offer.kind === "post");
+            setProfile((current) => ({
+              ...current,
+              offers: result.offers,
+              rate: post?.price ?? current.rate,
+            }));
+          }
           if (step < 2) setStep(step + 1);
           else void save(false);
         }}
       >
-        {step === 0 && (
-          <div className={styles.fieldGrid}>
-            <label>
-              {copy(locale, "Your name", "Tavo vardas")}
-              <input
-                required
-                maxLength={80}
-                value={profile.name}
-                onChange={(event) => update("name", event.target.value)}
-                placeholder={copy(
-                  locale,
-                  "First and last name",
-                  "Vardas ir pavardė",
-                )}
-              />
-            </label>
-            <label>
-              {copy(locale, "Handle", "Naudotojo vardas")}
-              <input
-                required
-                pattern={
-                  profile.platform === "linkedin"
-                    ? "[a-zA-Z0-9-]{3,100}"
-                    : "[a-zA-Z0-9_]{1,15}"
-                }
-                maxLength={profile.platform === "linkedin" ? 100 : 15}
-                value={profile.handle}
-                onChange={(event) =>
-                  update("handle", event.target.value.replace(/^@/, ""))
-                }
-              />
-            </label>
-            <label>
-              {copy(locale, "Based in", "Miestas")}
-              <input
-                required
-                maxLength={100}
-                value={profile.location}
-                onChange={(event) => update("location", event.target.value)}
-              />
-            </label>
-            <label>
-              {copy(locale, "What you create", "Tavo kūrybos sritis")}
-              <select
-                required
-                value={profile.niche}
-                onChange={(event) => update("niche", event.target.value)}
-              >
-                <option value="">
-                  {copy(locale, "Choose a topic", "Pasirink temą")}
-                </option>
-                {profile.niche && !topics.includes(profile.niche) && (
-                  <option value={profile.niche}>{profile.niche}</option>
-                )}
-                {topics.map((topic) => (
-                  <option key={topic}>{topic}</option>
-                ))}
-              </select>
-            </label>
-            <label className={styles.fullField}>
-              {copy(
-                locale,
-                "Tell brands about yourself",
-                "Prisistatyk prekių ženklams",
-              )}
-              <textarea
-                required
-                minLength={10}
-                maxLength={500}
-                rows={4}
-                value={profile.bio}
-                onChange={(event) => update("bio", event.target.value)}
-                placeholder={copy(
-                  locale,
-                  "What you make, who you reach, and why it matters.",
-                  "Ką kuri, ką pasieki ir kodėl tai svarbu.",
-                )}
-              />
-              <small>{profile.bio.length}/500</small>
-            </label>
-          </div>
-        )}
-        {step === 1 && (
-          <div className={styles.rateEditor}>
-            <span className={styles.eyebrow}>
-              {copy(locale, "You set the price", "Kainą nustatai tu")}
-            </span>
-            <h3>
-              {copy(
-                locale,
-                "What is a post worth to you?",
-                "Kiek vertas tavo įrašas?",
-              )}
-            </h3>
-            <p className={styles.muted}>
-              {copy(
-                locale,
-                "Set an indicative price for one sponsored post. Your final agreement can include production, usage rights and other deliverables.",
-                "Nustatyk preliminarią vieno reklaminio įrašo kainą. Galutinėje sutartyje gali būti aptarta kūryba, naudojimo teisės ir kiti darbai.",
-              )}
-            </p>
-            <label className={styles.rateInput}>
-              <span>€</span>
-              <input
-                aria-label={copy(
-                  locale,
-                  "Price per sponsored post in euros",
-                  "Reklaminio įrašo kaina eurais",
-                )}
-                type="number"
-                min={0}
-                max={100000}
-                step={1}
-                required
-                value={profile.rate}
-                onChange={(event) => update("rate", Number(event.target.value))}
-              />
-              <span>/ {copy(locale, "post", "įrašą")}</span>
-            </label>
-            <input
-              aria-label={copy(locale, "Adjust your rate", "Keisk įkainį")}
-              type="range"
-              min={0}
-              max={1000}
-              step={5}
-              value={Math.min(profile.rate, 1000)}
-              onChange={(event) => update("rate", Number(event.target.value))}
-            />
-            <div className={styles.rangeLabels}>
-              <span>€0</span>
-              <span>€1,000</span>
-            </div>
-            <p className={styles.finePrint}>
-              {copy(
-                locale,
-                "This is your asking price, not a verified Vilnius market rate or a guaranteed booking.",
-                "Tai tavo prašoma kaina, o ne patvirtintas Vilniaus rinkos įkainis ar garantuotas užsakymas.",
-              )}
-            </p>
-          </div>
-        )}
-        {step === 2 && (
-          <>
-            <ProfilePreview profile={profile} locale={locale} />
-            {user && profile.platform !== "linkedin" && (
-              <label className={styles.checkbox}>
+        <fieldset className={styles.editorFields} disabled={busy}>
+          <h3 className={styles.visuallyHidden} ref={stepHeading} tabIndex={-1}>
+            {labels[step]}
+          </h3>
+          {step === 0 && (
+            <div className={styles.fieldGrid}>
+              <label>
+                {copy(locale, "Your name", "Tavo vardas")}
                 <input
-                  type="checkbox"
-                  checked={publish}
-                  onChange={(event) => setPublish(event.target.checked)}
+                  required
+                  maxLength={80}
+                  value={profile.name}
+                  onChange={(event) => update("name", event.target.value)}
+                  placeholder={copy(
+                    locale,
+                    "First and last name",
+                    "Vardas ir pavardė",
+                  )}
                 />
-                <span>
-                  {copy(
-                    locale,
-                    "Publish this profile publicly when saving to my account",
-                    "Išsaugant paskyroje paskelbti šį profilį viešai",
-                  )}
-                </span>
               </label>
-            )}
-          </>
-        )}
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
-        <div className={styles.editorActions}>
-          {step > 0 && (
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={() => setStep(step - 1)}
-            >
-              {copy(locale, "Back", "Atgal")}
-            </button>
-          )}
-          <button className={styles.primaryButton} disabled={busy}>
-            {copy(
-              locale,
-              step < 2 ? "Continue" : busy ? "Saving…" : "Save on this device",
-              step < 2
-                ? "Tęsti"
-                : busy
-                  ? "Saugoma…"
-                  : "Išsaugoti šiame įrenginyje",
-            )}
-            <ArrowRight size={16} />
-          </button>
-        </div>
-        {step === 2 && (
-          <div className={styles.exportActions}>
-            <button
-              className={styles.textButton}
-              type="button"
-              onClick={() => downloadProfile(profile, locale, "html")}
-            >
-              <Download size={15} />
-              {copy(locale, "Download media kit", "Atsisiųsti pristatymą")}
-            </button>
-            <button
-              className={styles.textButton}
-              type="button"
-              onClick={() => downloadProfile(profile, locale)}
-            >
-              <Download size={15} />
-              JSON
-            </button>
-            {profile.platform !== "linkedin" &&
-              (user ? (
-                <button
-                  className={styles.textButton}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void save(true)}
+              <label>
+                {copy(locale, "Handle", "Naudotojo vardas")}
+                <input
+                  required
+                  pattern={
+                    profile.platform === "linkedin"
+                      ? "[a-zA-Z0-9\\-]{3,100}"
+                      : "[a-zA-Z0-9_]{1,15}"
+                  }
+                  maxLength={profile.platform === "linkedin" ? 100 : 15}
+                  value={profile.handle}
+                  onChange={(event) =>
+                    update("handle", event.target.value.replace(/^@/, ""))
+                  }
+                />
+              </label>
+              <label>
+                {copy(locale, "Based in", "Miestas")}
+                <input
+                  required
+                  maxLength={100}
+                  value={profile.location}
+                  onChange={(event) => update("location", event.target.value)}
+                />
+              </label>
+              <label>
+                {copy(locale, "What you create", "Tavo kūrybos sritis")}
+                <select
+                  required
+                  value={profile.niche}
+                  onChange={(event) => update("niche", event.target.value)}
                 >
-                  {copy(locale, "Save to my account", "Išsaugoti paskyroje")}
-                </button>
-              ) : (
-                <button
-                  className={styles.textButton}
-                  type="button"
-                  onClick={onLogin}
-                >
-                  {copy(
-                    locale,
-                    "Sign in to save online",
-                    "Prisijungti ir išsaugoti internete",
+                  <option value="">
+                    {copy(locale, "Choose a topic", "Pasirink temą")}
+                  </option>
+                  {profile.niche && !topics.includes(profile.niche) && (
+                    <option value={profile.niche}>{profile.niche}</option>
                   )}
-                </button>
-              ))}
+                  {topics.map((topic) => (
+                    <option key={topic}>{topic}</option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.fullField}>
+                {copy(
+                  locale,
+                  "Tell brands about yourself",
+                  "Prisistatyk prekių ženklams",
+                )}
+                <textarea
+                  required
+                  minLength={10}
+                  maxLength={500}
+                  rows={4}
+                  value={profile.bio}
+                  onChange={(event) => update("bio", event.target.value)}
+                  placeholder={copy(
+                    locale,
+                    "What you make, who you reach, and why it matters.",
+                    "Ką kuri, ką pasieki ir kodėl tai svarbu.",
+                  )}
+                />
+                <small>{profile.bio.length}/500</small>
+              </label>
+            </div>
+          )}
+          {step === 1 && (
+            <OffersEditor
+              rows={offerRows}
+              locale={locale}
+              disabled={busy}
+              invalidId={invalidOfferId}
+              onChange={(rows) => {
+                setOfferRows(rows);
+                setInvalidOfferId(undefined);
+                setError("");
+              }}
+            />
+          )}
+          {step === 2 && (
+            <>
+              <ProfilePreview profile={profile} locale={locale} />
+              {user && profile.platform !== "linkedin" && (
+                <label className={styles.checkbox}>
+                  <input
+                    type="checkbox"
+                    checked={publish}
+                    onChange={(event) => setPublish(event.target.checked)}
+                  />
+                  <span>
+                    {copy(
+                      locale,
+                      "Publish this profile publicly when saving to my account",
+                      "Išsaugant paskyroje paskelbti šį profilį viešai",
+                    )}
+                  </span>
+                </label>
+              )}
+            </>
+          )}
+          {error && (
+            <p className={styles.error} role="alert">
+              {error}
+            </p>
+          )}
+          <div className={styles.editorActions}>
+            {step > 0 && (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => setStep(step - 1)}
+              >
+                {copy(locale, "Back", "Atgal")}
+              </button>
+            )}
+            <button className={styles.primaryButton} disabled={busy}>
+              {copy(
+                locale,
+                step < 2
+                  ? "Continue"
+                  : busy
+                    ? "Saving…"
+                    : "Save on this device",
+                step < 2
+                  ? "Tęsti"
+                  : busy
+                    ? "Saugoma…"
+                    : "Išsaugoti šiame įrenginyje",
+              )}
+              <ArrowRight size={16} />
+            </button>
           </div>
-        )}
+          {step === 2 && (
+            <div className={styles.exportActions}>
+              <button
+                className={styles.textButton}
+                type="button"
+                onClick={() =>
+                  downloadProfile(
+                    { ...profile, published: false },
+                    locale,
+                    "html",
+                  )
+                }
+              >
+                <Download size={15} />
+                {copy(locale, "Download media kit", "Atsisiųsti pristatymą")}
+              </button>
+              <button
+                className={styles.textButton}
+                type="button"
+                onClick={() =>
+                  downloadProfile({ ...profile, published: false }, locale)
+                }
+              >
+                <Download size={15} />
+                JSON
+              </button>
+              {profile.platform !== "linkedin" &&
+                (user ? (
+                  <button
+                    className={styles.textButton}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void save(true)}
+                  >
+                    {copy(locale, "Save to my account", "Išsaugoti paskyroje")}
+                  </button>
+                ) : (
+                  <button
+                    className={styles.textButton}
+                    type="button"
+                    onClick={onLogin}
+                  >
+                    {copy(
+                      locale,
+                      "Sign in to save online",
+                      "Prisijungti ir išsaugoti internete",
+                    )}
+                  </button>
+                ))}
+            </div>
+          )}
+        </fieldset>
       </form>
     </Dialog>
   );
@@ -561,7 +614,11 @@ function AttentionGame({ locale }: { locale: Locale }) {
           "Širdelių žaidimas. Spausk tarpą ir rink širdeles.",
         )}
         onKeyDown={(event) => {
-          if (event.code === "Space") {
+          if (
+            event.code === "Space" &&
+            event.target === event.currentTarget &&
+            !event.repeat
+          ) {
             event.preventDefault();
             if (running) collect();
             else {
@@ -630,15 +687,64 @@ function AttentionGame({ locale }: { locale: Locale }) {
   );
 }
 
-export function CreatorLanding({
+export function CreatorLanding(props: { locale: Locale; handle?: string }) {
+  return (
+    <Suspense
+      fallback={
+        <div className={styles.page}>
+          <CreatorHeader locale={props.locale} />
+          <main className={styles.publicWrap}>
+            <p>
+              {copy(
+                props.locale,
+                "Loading creator page…",
+                "Įkeliamas kūrėjo puslapis…",
+              )}
+            </p>
+          </main>
+        </div>
+      }
+    >
+      <CreatorLandingRoute {...props} />
+    </Suspense>
+  );
+}
+function CreatorLandingRoute(props: { locale: Locale; handle?: string }) {
+  const query = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const platform = query.get("platform") === "linkedin" ? "linkedin" : "x";
+  function changePlatform(next: "x" | "linkedin") {
+    const params = new URLSearchParams(window.location.search);
+    if (next === "x") params.delete("platform");
+    else params.set("platform", next);
+    router.replace(
+      `${pathname}${params.size ? `?${params}` : ""}${window.location.hash}`,
+      { scroll: false },
+    );
+  }
+  return (
+    <CreatorLandingPage
+      key={`${props.locale}:${props.handle ?? "landing"}`}
+      {...props}
+      platform={platform}
+      onPlatformChange={changePlatform}
+    />
+  );
+}
+
+function CreatorLandingPage({
   locale,
   handle,
+  platform,
+  onPlatformChange,
 }: {
   locale: Locale;
   handle?: string;
+  platform: "x" | "linkedin";
+  onPlatformChange: (platform: "x" | "linkedin") => void;
 }) {
   const [input, setInput] = useState(handle ?? "");
-  const [platform, setPlatform] = useState<"x" | "linkedin">("x");
   const [error, setError] = useState("");
   const [editor, setEditor] = useState<CreatorProfile | null>(null);
   const [login, setLogin] = useState(false);
@@ -648,37 +754,65 @@ export function CreatorLanding({
     null,
   );
   const [loadingPublic, setLoadingPublic] = useState(!!handle);
+  const [publicError, setPublicError] = useState("");
+  const [publicMissing, setPublicMissing] = useState(false);
+  const [lookupAttempt, setLookupAttempt] = useState(0);
   const [sampleRate, setSampleRate] = useState(80);
   const [sampleAccepted, setSampleAccepted] = useState(false);
   const [task, setTask] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    void api<{ user: SessionUser | null }>("/api/auth/session")
-      .then((value) => setUser(value.user))
+    const controller = new AbortController();
+    void api<{ user: SessionUser | null }>(
+      "/api/auth/session",
+      "GET",
+      undefined,
+      { signal: controller.signal },
+    )
+      .then((value) => {
+        if (!controller.signal.aborted && value.user?.email)
+          setUser(value.user);
+      })
       .catch(() => {});
+    return () => controller.abort();
   }, []);
   useEffect(() => {
     if (!handle) return;
-    let active = true;
-    void api<{ profile: CreatorProfile }>(
+    const controller = new AbortController();
+    void api<{ profile: unknown }>(
       `/api/creator/public/${encodeURIComponent(handle)}`,
+      "GET",
+      undefined,
+      { signal: controller.signal },
     )
       .then((result) => {
-        if (active) setPublicProfile(result.profile);
+        const profile = parseCreatorProfile(result.profile);
+        if (
+          !profile?.published ||
+          profile.handle.toLowerCase() !== handle.toLowerCase()
+        )
+          throw new RequestError(
+            "The public profile could not be loaded. Please try again.",
+            "service_error",
+          );
+        if (!controller.signal.aborted) setPublicProfile(profile);
       })
-      .catch(() => {})
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof RequestError && error.code === "not_found")
+          setPublicMissing(true);
+        else setPublicError(requestError(locale, error));
+      })
       .finally(() => {
-        if (active) setLoadingPublic(false);
+        if (!controller.signal.aborted) setLoadingPublic(false);
       });
-    return () => {
-      active = false;
-    };
-  }, [handle]);
+    return () => controller.abort();
+  }, [handle, locale, lookupAttempt]);
   const closeEditor = useCallback(() => setEditor(null), []);
   const closeLogin = useCallback(() => setLogin(false), []);
   function build(event: React.FormEvent) {
     event.preventDefault();
-    const normalized = normalizeHandle(input, platform);
+    const normalized = normalizeCreatorInput(input, platform);
     if (!normalized)
       return setError(
         copy(
@@ -694,7 +828,7 @@ export function CreatorLanding({
     setError("");
     const previous = readDraft();
     setEditor(
-      previous?.handle === normalized
+      previous?.handle === normalized && (previous.platform ?? "x") === platform
         ? previous
         : {
             ...emptyProfile(normalized),
@@ -747,7 +881,7 @@ export function CreatorLanding({
           type="button"
           aria-pressed={platform === "x"}
           onClick={() => {
-            setPlatform("x");
+            onPlatformChange("x");
             setError("");
           }}
         >
@@ -757,7 +891,7 @@ export function CreatorLanding({
           type="button"
           aria-pressed={platform === "linkedin"}
           onClick={() => {
-            setPlatform("linkedin");
+            onPlatformChange("linkedin");
             setError("");
           }}
         >
@@ -773,10 +907,40 @@ export function CreatorLanding({
   );
   return (
     <div className={styles.page}>
-      <CreatorHeader locale={locale} onLogin={() => setLogin(true)} />
+      <CreatorHeader
+        locale={locale}
+        onLogin={user ? undefined : () => setLogin(true)}
+      />
       {loadingPublic ? (
         <main className={styles.publicWrap}>
           <p>{copy(locale, "Loading profile…", "Įkeliamas profilis…")}</p>
+        </main>
+      ) : publicError ? (
+        <main className={styles.publicWrap}>
+          <h1>
+            {copy(
+              locale,
+              "We could not load this profile.",
+              "Nepavyko įkelti šio profilio.",
+            )}
+          </h1>
+          <p role="alert" className={styles.error}>
+            {publicError}
+          </p>
+          <button
+            className={styles.primaryButton}
+            onClick={() => {
+              setPublicError("");
+              setPublicMissing(false);
+              setLoadingPublic(true);
+              setLookupAttempt((current) => current + 1);
+            }}
+          >
+            {copy(locale, "Try again", "Bandyti dar kartą")}
+          </button>
+          <Link className={styles.textButton} href={`/${locale}/creators`}>
+            {copy(locale, "Back to creators", "Grįžti į kūrėjų puslapį")}
+          </Link>
         </main>
       ) : publicProfile ? (
         <main className={styles.publicWrap}>
@@ -795,6 +959,15 @@ export function CreatorLanding({
         </main>
       ) : (
         <>
+          {publicMissing && (
+            <p className={styles.missingProfile} role="status">
+              {copy(
+                locale,
+                `No published profile is available at @${handle}. You can start your own draft below.`,
+                `Viešo profilio adresu @${handle} nėra. Toliau gali pradėti savo juodraštį.`,
+              )}
+            </p>
+          )}
           <section className={styles.hero}>
             <div className={styles.heroCopy}>
               <span className={styles.eyebrow}>

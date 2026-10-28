@@ -60,4 +60,19 @@ export async function sendOtpEmail(
       "email_failed",
       "We could not send the email. Please try again later.",
     );
+  const receipt: unknown = await response.json().catch(() => null);
+  if (
+    !receipt ||
+    typeof receipt !== "object" ||
+    !("id" in receipt) ||
+    typeof receipt.id !== "string" ||
+    !receipt.id ||
+    receipt.id.length > 200
+  ) {
+    throw new ApiError(
+      502,
+      "email_failed",
+      "The email provider did not confirm the message. Please try again later.",
+    );
+  }
 }

@@ -17,6 +17,21 @@ const nextConfig: NextConfig = {
         permanent: false,
       },
       { source: "/brands", destination: "/en/brands", permanent: false },
+      {
+        source: "/linkedin",
+        destination: "/en/creators?platform=linkedin",
+        permanent: false,
+      },
+      {
+        source: "/en/linkedin",
+        destination: "/en/creators?platform=linkedin",
+        permanent: false,
+      },
+      {
+        source: "/lt/linkedin",
+        destination: "/lt/creators?platform=linkedin",
+        permanent: false,
+      },
       { source: "/dashboard", destination: "/en/dashboard", permanent: false },
       {
         source: "/@:handle",
