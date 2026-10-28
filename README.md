@@ -2,6 +2,8 @@
 
 A close visual recreation of the public [Unfair creator-worth experience](https://creators.unfair.so/worth), adapted to Vilnius, Lithuania. English and Lithuanian, EUR calculations, a custom pixel Vilnius skyline, creator media kits, comparisons and downloadable report cards.
 
+Live on Vercel in the **boringai** team: [English](https://x-two-ecru.vercel.app/en/worth) · [Lietuvių](https://x-two-ecru.vercel.app/lt/worth). The project is connected to this repository's `main` branch and uses a persistent Turso database in Ireland.
+
 ## Run
 
 Use **Node.js 24 LTS** (see `.nvmrc`).

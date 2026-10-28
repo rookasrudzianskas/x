@@ -36,7 +36,7 @@ Security tests include cross-origin mutation rejection, body-size limits, OTP ex
 - Tests cover standard/custom offers, decimal prices, corrupted/legacy drafts, localized HTML escaping, exported profile data, budget calculations, failed email resend, atomic OTP/session creation, concurrent publishing and failed-rename rollback.
 - Production build, TypeScript and ESLint pass. Production route checks returned the expected HTML/PNG/status codes.
 
-The follow-up Chrome interaction and mobile-layout pass could not be completed: the browser tool continued reporting that local browser use was disabled in Work settings, including after a fresh connection attempt. The earlier Chrome evidence above applies to the initial release; the new offer controls, comparison editing and dialog changes have automated coverage and code review, but are not claimed as browser-verified in this pass.
+The browser-extension path continued reporting that local browser use was disabled in Work settings. Native Chrome control subsequently became available for the deployment below. The earlier mobile-layout evidence applies to the initial release; the new offer controls, comparison editing and dialog changes have automated coverage and code review, but are not claimed as mobile-browser-verified in this pass.
 
 ## Vercel preparation
 
@@ -46,7 +46,18 @@ The follow-up Chrome interaction and mobile-layout pass could not be completed: 
 - All 272 tests, ESLint, and the production build (including TypeScript) passed. The Vercel build command was exercised with non-secret fixture values and made no remote database connection; this does not verify a real hosted database.
 - `.vercelignore` excludes local databases, environment files and local build artifacts from CLI uploads.
 
-Deployment is pending authenticated access to the requested Vercel team and a persistent remote database. The Vercel CLI reported that it was logged out; no production URL or successful live deployment is claimed. Browser access also remained disabled in the tool when retried.
+## Live Vercel deployment
+
+Deployed on 28 October 2026 through the Vercel website in Chrome, using the existing GitHub connection for `rookasrudzianskas/x`, branch `main`, in the **boringai** team. No CLI login was used for deployment.
+
+- Vercel marked deployment [`9V7FHS5bZzH1o1iMDgyNKHTBrhq2`](https://vercel.com/boringai/x/9V7FHS5bZzH1o1iMDgyNKHTBrhq2) **Ready / Production** for application commit `bceb3e0aaeb02fa6208e00d648ae37d76ba83980`.
+- Production origin: [https://x-two-ecru.vercel.app](https://x-two-ecru.vercel.app).
+- Persistent Turso database `x-vilnius-worth`, EU West (Ireland), connected to Production using the integration's sensitive environment variables. The application origin and trusted-proxy setting were configured before building.
+- **42 live HTTP checks passed, zero failed** against the production origin. They cover both locales' calculator, creator, brand, methodology, privacy, terms, report and comparison pages; canonical URLs, language tags, robots and sitemap; single/comparison social and downloadable PNGs; example calculations and public-board sorting; and invalid input, unsupported locale, same-account and cross-origin boundaries.
+- One explicitly fictional, unlisted QA report was created and reloaded from the hosted database. It returned **€20 per post / €1,040 annually**, its saved-report PNGs rendered with private/no-store cache headers, and it remained absent from the public board.
+- Native Chrome inspection confirmed the live desktop typography, illustration and Vilnius skyline. Entering `demo_milda` opened its report, the comparison control loaded `demo_tomas`, switching to Lithuanian preserved both accounts and localized the amounts, and copying the comparison link showed localized success feedback.
+- The Lithuanian creator wizard accepted a fictional local draft, a standard repost offer at €10.50 and a custom offer at €35.25. Its preview and saved dashboard retained all three enabled offers and localized amounts. This draft was saved only in the QA browser; no public profile or account was created.
+- Vercel completed the locked dependency install and production build. Build logs reported zero dependency vulnerabilities; non-fatal npm configuration/install-script and ESLint lifecycle warnings were present.
 
 ## Boundaries
 
