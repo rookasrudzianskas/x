@@ -89,7 +89,7 @@ Booking requests are saved in the database. This is an inquiry record, not an ap
 
 This is a standard Node.js Next.js app; deploy to a compatible Next.js host. Set `NEXT_PUBLIC_APP_URL` to its HTTPS origin. **Use a persistent remote libSQL database on ephemeral/serverless hosts**; the default local SQLite file is intended for local development or a server with a persistent disk. Configure email/X only when those integrations are needed.
 
-For Vercel, import `rookasrudzianskas/x` into the intended team and select Node.js 24. Configure these **Production** environment variables before deploying:
+For Vercel, import `rookasrudzianskas/x` into the intended team. The repository selects Node.js 24 and installs locked dependencies with `npm ci`. Configure these **Production** environment variables before deploying:
 
 - `DATABASE_URL`: the persistent remote database URL (`libsql://…` or `https://…`).
 - `DATABASE_AUTH_TOKEN`: a read/write credential for that database.
